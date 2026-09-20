@@ -30,13 +30,21 @@ Deadline: 25 Sep 2026 11:59 PM IST (aiming for 2–3 day build).
 - Backend skeleton in backend/ (Express, Mongoose models Flow/RunLog, /api/flows list+delete, /api/metrics, /ws handshake, zod config/validation, pino, Dockerfile, docker-compose.yml, .env.example). `docker compose up -d --build` verified. Host port 3100 (3000 is used by an unrelated Langfuse container); phone uses `adb reverse tcp:3100 tcp:3100` -> http://localhost:3100.
 - Not yet: Deepgram/Groq wiring, recorder, replayer, WebSocket client in app, mic, TTS, dashboard HTML.
 
-## Next steps (Day 2)
-1. Flow Recorder from accessibility events (click/text-change -> steps w/ selectors; redact password).
-2. Flow Replayer (wait/poll 6s, retry, LLM fallback endpoint), replay hand-written flow 3x.
-3. Backend: Groq client + prompts (intent/slot, generalise, pick-element, paraphrase), REST for flows create/get.
-4. Android networking layer (OkHttp WS) + settings screen for backend URL.
-5. Voice pipeline: mic -> Deepgram -> ...
+## Day 2 GATE (2026-09-20) — reached
+- Groq: `llama-3.3-70b-versatile` is NOT served on this key anymore (no Llama in the account model list). Using `openai/gpt-oss-20b` (JSON mode OK, ~0.8s). Change via GROQ_MODEL. Deviation from "Llama 3.x" — mention in pitch/README.
+- Backend: src/lib/groq.js (single validated JSON call), prompts/pickElement.js + intent.js, routes /api/llm/pick-element, /api/llm/intent, POST/GET /api/flows. `npm test` (node --test) = 3 passing.
+- Android: core/Flow.kt (schema + slot resolve), Replayer (poll 6s, retry once 3s, LLM fallback, expect verification, sensitive-step gate = DenyAll by default), Recorder (events->steps, debounced typing, redacts passwords, expect = next window pkg), BackendElementPicker. Unit tests SelectorMatcherTest pass (`./gradlew testDebugUnitTest`).
+- Launch uses CLEAR_TASK (deterministic fresh start). Slot tokens allowed in selector text ("{{query}} near me"); slot-bound taps fall back to contains(slotValue); taps never target editable nodes.
+- Hand-written flows in tools/flows/*.json; run `tools/replay.sh <flow> '{"query":"pizza"}'`. Results: settings_bluetooth 3/3 (Bluetooth verified toggled), chrome_search pizza/burger/sushi/tacos/noodles all OK, chrome_images pizza/burger/cats 3/3, test_fallback (wrong selector -> LLM picks element) 3/3 with llm=true.
+- Recorder: captured real selectors from real input events (not coordinates) but only tap-events tested; typing capture + window-change `expect` need a proper test in Day 3.
+- GOTCHAS: (1) `adb shell` re-splits args on spaces — tools/a11y.sh now escapes; (2) adb reverse mapping is lost on USB reconnect -> rerun `adb reverse tcp:3100 tcp:3100` (LLM fallback silently fails without it; now logged as TVA pick-element failed); (3) a blind `input tap` toggled Airplane mode once (restored) — never blind-tap coordinates; (4) cleartext HTTP allowed (dev, localhost/LAN) — production would be TLS.
+- Stopped relationsai-voice container per user (other relationsai containers still running; port 3000 = langfuse).
+
+## Next steps (Day 3)
+1. Android WebSocket client (OkHttp), mic push-to-talk + foreground service, audio streaming; backend Deepgram STT + Aura TTS over /ws; TTS playback.
+2. Backend orchestration: transcript -> intent -> Mongo lookup (+ paraphrase matching via Groq) -> replay msg or "show me once" -> teach mode; flow generalisation (slot detect) + save; RunLog writes; metrics dashboard HTML.
+3. Sensitive-step voice/tap confirmation; popup dismissal via fallback; settings screen (backend URL) + learned flows list + teach indicator UI.
+4. README, Docker verify, demo video, PPT; ask team name; wait for go-ahead before tag.
 
 ## Open items
-- Team name (CollegeName_TeamName) — needed before submission filenames (Day 3).
-- User must put Deepgram+Groq keys in backend/.env (created from .env.example, gitignored).
+- Team name (CollegeName_TeamName) — needed before submission filenames.

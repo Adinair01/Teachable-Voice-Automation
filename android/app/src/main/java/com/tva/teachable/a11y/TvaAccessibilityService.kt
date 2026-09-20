@@ -51,7 +51,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     override fun tree() = UiTreeReader.readLive(rootInActiveWindow)
     override fun launch(packageName: String): Boolean {
         val i = packageManager.getLaunchIntentForPackage(packageName) ?: return false
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK) // fresh start: replay must begin from the app home
         startActivity(i); return true
     }
     override fun tap(tree: LiveTree, node: UiNode) = executor.tap(tree, node)

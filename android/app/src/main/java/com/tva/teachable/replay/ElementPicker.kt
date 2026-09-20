@@ -2,6 +2,7 @@ package com.tva.teachable.replay
 
 import com.tva.teachable.core.FlowStep
 import com.tva.teachable.core.UiNode
+import android.util.Log
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONArray
@@ -34,11 +35,11 @@ class BackendElementPicker(private val baseUrl: String) : ElementPicker {
             c.requestMethod = "POST"; c.connectTimeout = 5000; c.readTimeout = 15000; c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.outputStream.use { it.write(body.toString().toByteArray()) }
-            if (c.responseCode != 200) return null
+            if (c.responseCode != 200) { Log.w(TAG, "pick-element http ${c.responseCode}"); return null }
             val res = JSONObject(c.inputStream.bufferedReader().readText())
             if (res.isNull("index")) null else res.getInt("index")
-        } catch (e: Exception) { null } finally { c.disconnect() }
+        } catch (e: Exception) { Log.w(TAG, "pick-element failed: $e"); null } finally { c.disconnect() }
     }
 
-    companion object { private const val MAX_NODES = 120 }
+    companion object { private const val MAX_NODES = 120; private const val TAG = "TVA" }
 }

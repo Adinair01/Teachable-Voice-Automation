@@ -1,0 +1,55 @@
+{
+  "intentKey": "toggle_bluetooth",
+  "description": "toggle Bluetooth in Settings",
+  "appPackage": "com.android.settings",
+  "steps": [
+    {
+      "type": "launch",
+      "selector": {},
+      "slotRef": null,
+      "value": "com.android.settings",
+      "sensitive": false,
+      "expect": {}
+    },
+    {
+      "type": "tap",
+      "selector": {
+        "text": "Bluetooth"
+      },
+      "slotRef": null,
+      "value": "",
+      "sensitive": false,
+      "expect": {
+        "package": "com.oplus.wirelesssettings"
+      }
+    },
+    {
+      "type": "tap",
+      "selector": {
+        "resourceId": "android:id/switch_widget"
+      },
+      "slotRef": null,
+      "value": "",
+      "sensitive": false,
+      "expect": {}
+    },
+    {
+      "type": "wait",
+      "selector": {},
+      "slotRef": null,
+      "value": "800",
+      "sensitive": false,
+      "expect": {}
+    },
+    {
+      "type": "back",
+      "selector": {},
+      "slotRef": null,
+      "value": "",
+      "sensitive": false,
+      "expect": {
+        "package": "com.android.settings"
+      }
+    }
+  ]
+}

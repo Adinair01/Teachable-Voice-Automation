@@ -1,0 +1,47 @@
+{
+  "intentKey": "search_images",
+  "description": "search Google Images for a term in Chrome",
+  "appPackage": "com.android.chrome",
+  "steps": [
+    {
+      "type": "launch",
+      "selector": {},
+      "slotRef": null,
+      "value": "com.android.chrome",
+      "sensitive": false,
+      "expect": {}
+    },
+    {
+      "type": "type",
+      "selector": {
+        "className": "android.widget.EditText"
+      },
+      "slotRef": "query",
+      "value": "{{query}}",
+      "sensitive": false,
+      "expect": {}
+    },
+    {
+      "type": "tap",
+      "selector": {
+        "text": "{{query}} near me"
+      },
+      "slotRef": "query",
+      "value": "",
+      "sensitive": false,
+      "expect": {
+        "package": "com.android.chrome"
+      }
+    },
+    {
+      "type": "tap",
+      "selector": {
+        "text": "Images"
+      },
+      "slotRef": null,
+      "value": "",
+      "sensitive": false,
+      "expect": {}
+    }
+  ]
+}

@@ -3,6 +3,7 @@ package com.tva.teachable.replay
 import com.tva.teachable.a11y.LiveTree
 import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
+import com.tva.teachable.core.Selector
 import com.tva.teachable.core.SelectorMatcher
 import com.tva.teachable.core.StepType
 import com.tva.teachable.core.UiNode
@@ -56,14 +57,21 @@ class Replayer(
     }
 
     private suspend fun targeted(i: Int, step: FlowStep, slots: Map<String, String>, value: String): StepResult {
-        // Slot-bound taps match by substring against the *current* slot value, not the recorded text.
+        // Selector text may hold slot tokens ("{{query}} near me"); resolved against the CURRENT slot values.
+        val sel = step.selector.copy(text = resolveSlots(step.selector.text, slots))
         val slotValue = step.slotRef?.let { slots[it] }
-        val sel = if (slotValue != null && step.type == StepType.TAP) step.selector.copy(text = slotValue) else step.selector
-        val contains = slotValue != null && step.type == StepType.TAP
+        val probe = { t: LiveTree ->
+            // Taps never target text inputs (a typed value would otherwise match itself).
+            val nodes = if (step.type == StepType.TAP) t.nodes.filter { !it.editable } else t.nodes
+            // Exact resolved match first; for slot-bound taps fall back to "contains the slot value".
+            val hit = SelectorMatcher.find(nodes, sel)
+                ?: slotValue?.takeIf { step.type == StepType.TAP }?.let { SelectorMatcher.find(nodes, Selector(text = it), textContains = true) }
+            hit?.let { t to it }
+        }
 
         var fallback = false
-        var found = poll(cfg.waitMs) { t -> SelectorMatcher.find(t.nodes, sel, contains)?.let { t to it } }
-        if (found == null) found = poll(cfg.retryMs) { t -> SelectorMatcher.find(t.nodes, sel, contains)?.let { t to it } } // retry once
+        var found = poll(cfg.waitMs, probe)
+        if (found == null) found = poll(cfg.retryMs, probe) // retry once
         if (found == null && picker != null) { // LLM fallback: also how unexpected popups get dismissed/bypassed
             val tree = device.tree()
             val idx = picker.pick(step, slots, tree.nodes)
