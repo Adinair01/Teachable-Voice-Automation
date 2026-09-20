@@ -27,6 +27,12 @@ class SelectorMatcherTest {
         assertEquals(0, SelectorMatcher.find(nodes, Selector(text = "pizza"), textContains = true)?.index)
     }
 
+    @Test fun classNameAloneDoesNotRescueAFailedTextMatch() {
+        val nodes = listOf(node(0, cls = "android.widget.LinearLayout"), node(1, text = "Display & brightness"))
+        assertNull(SelectorMatcher.find(nodes, Selector(text = "Display Off", className = "android.widget.LinearLayout")))
+        assertEquals(0, SelectorMatcher.find(nodes, Selector(className = "android.widget.LinearLayout"))?.index)
+    }
+
     @Test fun slotTokensResolve() {
         assertEquals("burger near me", resolveSlots("{{query}} near me", mapOf("query" to "burger")))
     }

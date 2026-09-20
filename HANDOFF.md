@@ -51,6 +51,8 @@ FINDINGS / LIMITS:
 - USB link to the Realme is unreliable: it fully dropped at ~20:20; user must replug (data cable, File transfer mode, accept prompt).
 - Chrome Google suggestions are personalised/non-deterministic ("pizza near me" not always offered) -> hand chrome flows rely on contains-slot + LLM fallback.
 - Slot-bound taps drop `expect` in generalise() (screen after tap depends on slot).
+UPDATE (20:38): REAL MIC STT CONFIRMED (user's voice "Open gmail" transcribed). Taught flow "open Bluetooth settings" (recorded via real touch: launch settings + tap "{{setting}} Off") replayed for "take me to the Display settings" (paraphrase matched after matchFlow prompt fix; replay succeeded after SelectorMatcher fix: className fallback only when no id/text/desc). Phone-side teach state now cancels on WS reconnect. Metrics currently polluted by test runs (learn 1/3, replay 1/2, match 1/2) -> reset Mongo runlogs before final measurement (`db.runlogs.deleteMany({})`).
+Gotchas: after reinstall the a11y service may need `settings put secure enabled_accessibility_services <svc>` + wait ~5s (do NOT put empty string: "Bad arguments"). Agent and user testing simultaneously on the phone collide (stray "Sorry, I didn't catch that" = overlay mic touched).
 PENDING for Day 3 gate: taught flow #1 ("open Bluetooth settings", slot page=Bluetooth) recorded via real touch, then replay "open Display settings"; 2 more taught flows (e.g. toggle Bluetooth, search settings); real-mic STT test (needs user to hold overlay mic); confirmation flow test with a sensitive step; popup-dismissal; paraphrase accuracy eval set; metrics from real RunLogs; README; Docker fresh-verify; demo video; PPT; team name.
 
 ## Open items

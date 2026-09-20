@@ -19,3 +19,14 @@ test('rejects an index the model invented', async () => {
 test('malformed model output throws (surfaced, not swallowed)', async () => {
   await assert.rejects(pickElement(input, { fetchImpl: fakeFetch('{"index":"three"}') }));
 });
+
+test('matchFlow prompt treats slot-only differences as the same task', async () => {
+  const { matchFlow } = await import('../src/prompts/matchFlow.js');
+  let sent;
+  const spy = async (_u, opts) => { sent = JSON.parse(opts.body); return { ok: true, json: async () => ({ choices: [{ message: { content: '{"flowId":"abc123","slots":{"setting":"Display"}}' } }] }) }; };
+  const r = await matchFlow('take me to display settings', [{ _id: 'abc123', description: 'open Bluetooth settings', slots: [] }], { fetchImpl: spy });
+  assert.match(sent.messages[0].content, /differ only in slot values are the SAME task/);
+  assert.equal(r.flowId, 'abc123');
+  const bad = await matchFlow('x', [{ _id: 'abc123', description: 'd', slots: [] }], { fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"flowId":"zzz","slots":{}}' } }] }) }) });
+  assert.equal(bad.flowId, null); // ids the model invents are rejected
+});

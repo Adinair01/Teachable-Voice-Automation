@@ -45,7 +45,7 @@ class VoiceService : Service() {
         instance = this
         player = AudioPlayer(this)
         recorder = PttRecorder(scope) { client.sendAudio(it) }
-        client = BackendClient(BackendConfig.wsUrl(this), scope, ::onServer, ::onAudio) { AppState.connected.value = it; AppState.log(if (it) "connected" else "disconnected") }
+        client = BackendClient(BackendConfig.wsUrl(this), scope, ::onServer, ::onAudio, ::onConnection)
         client.start()
     }
 
@@ -62,6 +62,17 @@ class VoiceService : Service() {
 
     override fun onDestroy() {
         instance = null; recorder.stop(); client.stop(); player.release(); scope.cancel(); super.onDestroy()
+    }
+
+    /** Server-side session state dies with the socket, so a reconnect must drop any half-finished teach session too. */
+    private fun onConnection(up: Boolean) {
+        AppState.connected.value = up
+        AppState.log(if (up) "connected" else "disconnected")
+        if (up && teach != null) {
+            TvaAccessibilityService.instance?.stopRecording()
+            teach = null; AppState.teaching.value = false; AppState.status.value = "Idle"
+            AppState.log("teach session cancelled after reconnect — say the command again")
+        }
     }
 
     // ---- push-to-talk (called from the overlay button) ----

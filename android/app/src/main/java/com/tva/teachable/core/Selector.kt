@@ -37,7 +37,8 @@ object SelectorMatcher {
             { sel.resourceId.isNotEmpty() && it.resourceId == sel.resourceId },
             { sel.text.isNotEmpty() && !it.password && textMatches(it.text, sel.text, textContains) },
             { sel.contentDesc.isNotEmpty() && textMatches(it.contentDesc, sel.contentDesc, textContains) },
-            { sel.className.isNotEmpty() && it.className == sel.className },
+            // className is a last resort ONLY for selectors with no id/text/desc; otherwise it matches arbitrary containers.
+            { sel.className.isNotEmpty() && sel.resourceId.isEmpty() && sel.text.isEmpty() && sel.contentDesc.isEmpty() && it.className == sel.className },
         )
         for (pred in steps) {
             val hits = nodes.filter(pred)
