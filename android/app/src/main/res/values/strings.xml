@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Teachable Voice</string>
+    <string name="a11y_description">Reads the on-screen UI of the foreground app and performs taps, typing and scrolling so it can replay tasks you have taught it. Password fields are never read or stored.</string>
+</resources>
