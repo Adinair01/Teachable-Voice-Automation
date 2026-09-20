@@ -40,11 +40,19 @@ Deadline: 25 Sep 2026 11:59 PM IST (aiming for 2–3 day build).
 - GOTCHAS: (1) `adb shell` re-splits args on spaces — tools/a11y.sh now escapes; (2) adb reverse mapping is lost on USB reconnect -> rerun `adb reverse tcp:3100 tcp:3100` (LLM fallback silently fails without it; now logged as TVA pick-element failed); (3) a blind `input tap` toggled Airplane mode once (restored) — never blind-tap coordinates; (4) cleartext HTTP allowed (dev, localhost/LAN) — production would be TLS.
 - Stopped relationsai-voice container per user (other relationsai containers still running; port 3000 = langfuse).
 
-## Next steps (Day 3)
-1. Android WebSocket client (OkHttp), mic push-to-talk + foreground service, audio streaming; backend Deepgram STT + Aura TTS over /ws; TTS playback.
-2. Backend orchestration: transcript -> intent -> Mongo lookup (+ paraphrase matching via Groq) -> replay msg or "show me once" -> teach mode; flow generalisation (slot detect) + save; RunLog writes; metrics dashboard HTML.
-3. Sensitive-step voice/tap confirmation; popup dismissal via fallback; settings screen (backend URL) + learned flows list + teach indicator UI.
-4. README, Docker verify, demo video, PPT; ask team name; wait for go-ahead before tag.
+## Day 3 progress (2026-09-20, in progress)
+DONE & tested:
+- Backend: SttStream (Deepgram Nova 3 live) + Aura TTS (mp3), Session orchestrator (audio->STT->matchFlow (paraphrase+slots, one Groq call)->replay|teach; teach_done->generalise->save; run_result->RunLog replay+match), sensitive-step detection, dashboard at /dashboard (+/api/metrics/runs). Scripted end-to-end (`npm run smoke`): teach -> learned -> paraphrase "look up pizza on Google" matched w/ new slot -> replay -> TTS 23KB audio. `npm test` = 8 passing (smoke moved to scripts/ — it used to get picked up by node --test and pollute Mongo!).
+- Android: BackendClient (OkHttp WS, auto-reconnect), PttRecorder (16k PCM), AudioPlayer, VoiceService (foreground mic service; command loop; teach start/finish; replay w/ confirmation gate; run_result), Overlay (accessibility overlay: hold-to-talk, TEACH MODE indicator, Done, Yes/No), MainActivity (permissions, enable-accessibility, start service, backend URL, typed command, flows list, live log). Debug `say` cmd feeds a typed utterance into the same pipeline. ConfirmText unit-tested (fail-safe: unclear = NO).
+- Teach mode verified on device through typed commands: teach_start -> recorder -> `done` -> server saved flow.
+FINDINGS / LIMITS:
+- **Chrome omnibox suggestion taps emit NO TYPE_VIEW_CLICKED** (even with a real finger tap) -> recorder can't capture them. Standard views (Settings) record correctly (launch + tap with expect = next window). So taught demos use Settings; Chrome flows are hand-authored (tools/flows). Mention in limitations; possible mitigation = mirrored-screenshot teach mode or inferring submit.
+- `adb reverse` gets dropped on USB reconnect -> phone now uses LAN URL http://192.168.1.10:3100 (Mac and phone on same Wi-Fi; set in app + saved). IP may change (DHCP) -> update in app.
+- USB link to the Realme is unreliable: it fully dropped at ~20:20; user must replug (data cable, File transfer mode, accept prompt).
+- Chrome Google suggestions are personalised/non-deterministic ("pizza near me" not always offered) -> hand chrome flows rely on contains-slot + LLM fallback.
+- Slot-bound taps drop `expect` in generalise() (screen after tap depends on slot).
+PENDING for Day 3 gate: taught flow #1 ("open Bluetooth settings", slot page=Bluetooth) recorded via real touch, then replay "open Display settings"; 2 more taught flows (e.g. toggle Bluetooth, search settings); real-mic STT test (needs user to hold overlay mic); confirmation flow test with a sensitive step; popup-dismissal; paraphrase accuracy eval set; metrics from real RunLogs; README; Docker fresh-verify; demo video; PPT; team name.
 
 ## Open items
 - Team name (CollegeName_TeamName) — needed before submission filenames.
+- Phone must be re-plugged (see above).
