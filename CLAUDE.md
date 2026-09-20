@@ -1,5 +1,7 @@
 # Teachable Voice Automation — Samsung PRISM Gen AI Hackathon (Theme 3)
 
+> Session start: read HANDOFF.md (state/next steps) and log.md (strict rules: DRY, maintainable, durable, scalable, secure). Session end: update HANDOFF.md.
+
 Owner: Aditya Nair (Node/Express/Mongo dev, zero Android experience).
 Deadline: 25 Sep 2026, 11:59 PM IST. Realistic build window: 2–3 days (compressed plan below).
 
