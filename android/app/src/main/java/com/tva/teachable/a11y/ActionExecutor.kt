@@ -11,9 +11,9 @@ class ActionExecutor(private val service: AccessibilityService) {
     private fun findLive(sel: Selector): AccessibilityNodeInfo? {
         val root = service.rootInActiveWindow ?: return null
         if (sel.resourceId.isNotEmpty()) root.findAccessibilityNodeInfosByViewId(sel.resourceId).firstOrNull()?.let { return it }
-        if (sel.text.isNotEmpty()) root.findAccessibilityNodeInfosByText(sel.text)
-            .firstOrNull { !it.isPassword && it.text?.toString().equals(sel.text, true) }?.let { return it }
-        if (sel.contentDesc.isNotEmpty()) return search(root) { it.contentDescription?.toString().equals(sel.contentDesc, true) }
+        // Tree walk (not findByText): web content in Chrome/WebViews isn't reliably matched by the framework search.
+        if (sel.text.isNotEmpty()) search(root) { !it.isPassword && it.text?.toString().equals(sel.text, true) }?.let { return it }
+        if (sel.contentDesc.isNotEmpty()) search(root) { it.contentDescription?.toString().equals(sel.contentDesc, true) }?.let { return it }
         if (sel.className.isNotEmpty()) return search(root) { it.className?.toString() == sel.className }
         return null
     }

@@ -52,6 +52,7 @@ class TvaAccessibilityService : AccessibilityService() {
                     else -> "unknown cmd"
                 }
                 Log.i(TAG, "cmd=${i.getStringExtra("cmd")} result=$result")
+                File(filesDir, "result.txt").writeText("${i.getStringExtra("cmd")}:$result")
             }
         }
         val filter = IntentFilter("com.tva.DEBUG")

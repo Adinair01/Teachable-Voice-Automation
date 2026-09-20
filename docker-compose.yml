@@ -1,0 +1,15 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes: [mongo-data:/data/db]
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      MONGO_URL: mongodb://mongo:27017/tva
+    ports: ["${HOST_PORT:-3100}:3000"]
+    depends_on: [mongo]
+volumes:
+  mongo-data:
