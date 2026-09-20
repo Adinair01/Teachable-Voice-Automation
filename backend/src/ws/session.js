@@ -8,6 +8,8 @@ import { matchFlow } from '../prompts/matchFlow.js';
 import { generalise } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
 
+/** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
+const TEACH_PROMPT = 'Do whatever you want to do on the screen so I can learn from it.';
 const DONE = /^\s*(done|i'?m done|finished|that'?s it|stop teaching)\b/i;
 
 const teachDone = z.object({
@@ -87,7 +89,7 @@ export class Session {
     const intent = m.intentKey ? m : await extractIntent(text);
     this.teaching = { command: text, intentKey: intent.intentKey, slots: intent.slots ?? m.slots ?? {} };
     this.send({ type: 'teach_start', ...this.teaching });
-    return this.say("I haven't learned that yet. Show me once, then say done.");
+    return this.say(TEACH_PROMPT);
   }
 
   async #learn(body) {
@@ -97,6 +99,7 @@ export class Session {
     const ok = actionable >= 1 && (g.slots.length === 0 || g.slotsFound);
     if (!ok) {
       await this.#logLearn(false, body.command);
+      this.send({ type: 'teach_failed' }); // lets the phone drop out of "Saving…" instead of hanging there
       return this.say(g.slots.length && !g.slotsFound
         ? `I couldn't find "${g.slots[0].example}" in what you did. Let's try again.`
         : "I didn't see any actions. Let's try again.");

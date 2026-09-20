@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.IBinder
 import androidx.core.content.ContextCompat
 import com.tva.teachable.AppState
+import com.tva.teachable.ListenMode
 import com.tva.teachable.a11y.TvaAccessibilityService
 import com.tva.teachable.core.ConfirmText
 import com.tva.teachable.core.FlowJson
@@ -22,8 +23,10 @@ import com.tva.teachable.replay.Replayer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
@@ -39,6 +42,7 @@ class VoiceService : Service() {
     private var expectAudio = false
     private var confirm: CompletableDeferred<Boolean>? = null
     @Volatile private var awaitingConfirmSpeech = false
+    private var handsFreeCap: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -75,18 +79,32 @@ class VoiceService : Service() {
         }
     }
 
-    // ---- push-to-talk (called from the overlay button) ----
-    fun pttStart() {
+    // ---- microphone (called from the overlay button) ----
+    /**
+     * Opens the mic in [ListenMode.HOLD] (stops on release) or [ListenMode.HANDS_FREE] (stops on the next tap, with a
+     * safety cap so a forgotten hands-free session cannot record indefinitely).
+     */
+    fun pttStart(mode: ListenMode) {
+        if (AppState.listen.value != ListenMode.IDLE) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             AppState.log("microphone permission missing — open the app and allow it"); return
         }
         client.send(JSONObject().put("type", "audio_start").put("mode", if (awaitingConfirmSpeech) "confirm" else "command"))
-        if (recorder.start()) { AppState.listening.value = true; AppState.status.value = "Listening…" }
+        if (!recorder.start()) { client.send(JSONObject().put("type", "audio_end")); return } // don't leave the STT stream open
+        AppState.listen.value = mode
+        AppState.status.value = if (mode == ListenMode.HANDS_FREE) "Listening hands-free — tap to send" else "Listening…"
+        if (mode == ListenMode.HANDS_FREE) {
+            handsFreeCap = scope.launch {
+                delay(HANDS_FREE_MAX_MS)
+                if (AppState.listen.value == ListenMode.HANDS_FREE) { AppState.log("hands-free timed out after ${HANDS_FREE_MAX_MS / 1000}s"); pttStop() }
+            }
+        }
     }
 
     fun pttStop() {
-        if (!AppState.listening.value) return
-        recorder.stop(); AppState.listening.value = false; AppState.status.value = "Thinking…"
+        if (AppState.listen.value == ListenMode.IDLE) return
+        handsFreeCap?.cancel(); handsFreeCap = null
+        recorder.stop(); AppState.listen.value = ListenMode.IDLE; AppState.status.value = "Thinking…"
         client.send(JSONObject().put("type", "audio_end"))
     }
 
@@ -110,6 +128,7 @@ class VoiceService : Service() {
             "teach_finish" -> scope.launch { finishTeachingNow() }
             "replay" -> scope.launch { runReplay(m) }
             "learned" -> { AppState.status.value = "Learned"; AppState.log("learned flow (${m.optInt("steps")} steps)") }
+            "teach_failed" -> AppState.status.value = "Idle"
             "error" -> AppState.log("server error: ${m.optString("error")}")
         }
     }
@@ -123,7 +142,7 @@ class VoiceService : Service() {
     private fun startTeaching(m: JSONObject) {
         val svc = TvaAccessibilityService.instance ?: return AppState.log("Accessibility Service is not enabled")
         teach = m; svc.startRecording(); AppState.teaching.value = true
-        AppState.status.value = "TEACH MODE — do the task once, then say or tap Done"
+        AppState.status.value = "Do the task on screen, then say or tap Done"
         AppState.log("teach mode: ${m.optString("command")}")
     }
 
@@ -161,6 +180,7 @@ class VoiceService : Service() {
 
     companion object {
         private const val CHANNEL = "voice"
+        private const val HANDS_FREE_MAX_MS = 60_000L
         @Volatile var instance: VoiceService? = null
     }
 }

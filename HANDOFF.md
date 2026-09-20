@@ -55,6 +55,24 @@ UPDATE (20:38): REAL MIC STT CONFIRMED (user's voice "Open gmail" transcribed). 
 Gotchas: after reinstall the a11y service may need `settings put secure enabled_accessibility_services <svc>` + wait ~5s (do NOT put empty string: "Bad arguments"). Agent and user testing simultaneously on the phone collide (stray "Sorry, I didn't catch that" = overlay mic touched).
 PENDING for Day 3 gate: taught flow #1 ("open Bluetooth settings", slot page=Bluetooth) recorded via real touch, then replay "open Display settings"; 2 more taught flows (e.g. toggle Bluetooth, search settings); real-mic STT test (needs user to hold overlay mic); confirmation flow test with a sensitive step; popup-dismissal; paraphrase accuracy eval set; metrics from real RunLogs; README; Docker fresh-verify; demo video; PPT; team name.
 
+## Overlay UI/UX upgrade (2026-09-20, tested on device)
+- Floating panel is now DRAGGABLE over any app (drag from the mic button or the status text), snaps to the nearest side
+  edge on release, and persists x/y in SharedPreferences ("tva_overlay") — verified across an a11y-service restart.
+- Mic button has two modes, distinguished by a 220 ms hold delay: press-and-HOLD (red, white ring, "Release to send",
+  records while held — unchanged behaviour) and DOUBLE-TAP within 450 ms (green + pulse, "Tap to send", hands-free until
+  the next single tap, 60 s safety cap in VoiceService). Movement past touchSlop before the hold delay turns the gesture
+  into a drag instead, so dragging never records and tapping never drags.
+- CHOSE tap-to-stop over silence/endpoint detection for hands-free: the Deepgram stream is only finalised on `audio_end`
+  from the phone, so auto-stop would need new VAD/endpointing plumbing on both ends and would risk cutting the user off
+  mid-sentence during the demo. A second tap is deterministic and already on the path we test. Revisit post-hackathon.
+- Teach mode: backend now says exactly "Do whatever you want to do on the screen so I can learn from it."
+  (TEACH_PROMPT in ws/session.js); the overlay turns amber with an orange ring + "● TEACH MODE" header.
+- Backend also sends `teach_failed` so the phone leaves "Saving…" when a demo yields no usable steps.
+- AppState.listening (Boolean) replaced by AppState.listen (ListenMode IDLE/HOLD/HANDS_FREE) — one source of truth.
+- Tested on the Realme via adb (swipe = drag, long-press = hold, two taps = hands-free, single tap = stop, typed
+  command -> teach mode): all states rendered correctly, screenshots in the session scratchpad.
+- NOTE: these tests added ~3 failed `learn` RunLogs ("play some jazz on the radio") — reset runlogs before final metrics.
+
 ## Open items
 - Team name (CollegeName_TeamName) — needed before submission filenames.
 - Phone must be re-plugged (see above).
