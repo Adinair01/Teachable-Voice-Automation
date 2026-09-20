@@ -33,6 +33,8 @@ export function generalise({ command, intentKey, slots, steps }) {
         }
       }
     }
+    // The screen a slot-bound tap leads to depends on the slot value, so a recorded expectation would be wrong on replay.
+    if (step.type === 'tap' && step.slotRef) step.expect = {};
     step.sensitive = isSensitiveStep(step);
     out.push(step);
   }

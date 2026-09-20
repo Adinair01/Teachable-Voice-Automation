@@ -30,10 +30,12 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     private lateinit var executor: ActionExecutor
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var recorder: Recorder? = null
+    private var overlay: Overlay? = null
 
     override fun onServiceConnected() {
         instance = this
         executor = ActionExecutor(this)
+        overlay = Overlay(this, scope).also { it.show() }
         if (BuildConfig.DEBUG) registerDebugReceiver()
         Log.i(TAG, "service connected")
     }
@@ -43,6 +45,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
 
     override fun onDestroy() {
         instance = null
+        overlay?.hide()
         scope.cancel()
         super.onDestroy()
     }
@@ -59,7 +62,10 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     override fun scroll(tree: LiveTree) = executor.scroll(tree)
     override fun back() = executor.back()
 
-    fun startRecording() { recorder = Recorder(packageName).also { it.start(tree().nodes.firstOrNull()?.packageName) } }
+    fun startRecording() {
+        val home = packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
+        recorder = Recorder(packageName, setOfNotNull("com.android.systemui", home)).also { it.start() }
+    }
     fun stopRecording() = recorder?.stop().also { recorder = null }.orEmpty()
 
     /** Debug-only adb channel: `adb shell am broadcast -a com.tva.DEBUG --es cmd <dump|tap|type|scroll|back|replay|rec_start|rec_stop>`. */
@@ -75,6 +81,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                 val result = when (cmd) {
                     "dump" -> dump()
                     "tap", "type" -> withNode(sel) { t, n -> if (cmd == "tap") tap(t, n) else type(t, n, i.getStringExtra("value").orEmpty()) }.toString()
+                    "say" -> (com.tva.teachable.voice.VoiceService.instance?.also { it.sendCommand(i.getStringExtra("text").orEmpty()) } != null).toString()
                     "scroll" -> scroll(tree()).toString()
                     "back" -> back().toString()
                     "rec_start" -> { startRecording(); "recording" }

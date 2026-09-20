@@ -65,3 +65,10 @@ object FlowJson {
 
     fun toJson(steps: List<FlowStep>): JSONArray = JSONArray().also { a -> steps.forEach { a.put(stepToJson(it)) } }
 }
+
+/** Spoken confirmation parsing; anything not clearly affirmative is a NO (fail safe). */
+object ConfirmText {
+    private val YES = Regex("\\b(yes|yeah|yep|yup|confirm|confirmed|go ahead|do it|sure|proceed)\\b", RegexOption.IGNORE_CASE)
+    private val NO = Regex("\\b(no|nope|cancel|stop|don'?t|abort)\\b", RegexOption.IGNORE_CASE)
+    fun isYes(text: String) = YES.containsMatchIn(text) && !NO.containsMatchIn(text)
+}

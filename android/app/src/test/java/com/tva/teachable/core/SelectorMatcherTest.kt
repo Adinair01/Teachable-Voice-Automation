@@ -31,3 +31,10 @@ class SelectorMatcherTest {
         assertEquals("burger near me", resolveSlots("{{query}} near me", mapOf("query" to "burger")))
     }
 }
+
+class ConfirmTextTest {
+    @Test fun affirmative() { assertEquals(true, ConfirmText.isYes("yes go ahead")) }
+    @Test fun negativeOrUnclearIsNo() {
+        assertEquals(false, ConfirmText.isYes("no don't")); assertEquals(false, ConfirmText.isYes("hmm maybe")); assertEquals(false, ConfirmText.isYes("yes... actually cancel"))
+    }
+}

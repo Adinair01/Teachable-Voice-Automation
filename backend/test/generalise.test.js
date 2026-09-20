@@ -30,3 +30,10 @@ test('appPackage comes from the launch step; slotsFound reported', () => {
   assert.equal(flow.appPackage, 'com.android.chrome');
   assert.equal(flow.slotsFound, true);
 });
+
+test('slot-bound taps drop their recorded expectation', () => {
+  const f = generalise({ command: 'open bluetooth settings', intentKey: 'open_settings', slots: { page: 'Bluetooth' },
+    steps: [{ type: 'launch', value: 'com.android.settings' }, { type: 'tap', selector: { text: 'Bluetooth' }, expect: { package: 'com.oplus.wirelesssettings' } }] });
+  assert.equal(f.steps[1].selector.text, '{{page}}');
+  assert.deepEqual(f.steps[1].expect, {});
+});

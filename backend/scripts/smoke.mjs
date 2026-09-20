@@ -1,4 +1,4 @@
-// End-to-end protocol smoke test against a running backend: node test/smoke.mjs [ws://localhost:3100/ws]
+// End-to-end protocol smoke test against a running backend: node scripts/smoke.mjs [ws://localhost:3100/ws]
 import WebSocket from 'ws';
 const ws = new WebSocket(process.argv[2] ?? 'ws://localhost:3100/ws');
 const inbox = []; let audioBytes = 0;

@@ -1,12 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical" android:padding="24dp">
-    <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:textSize="18sp" />
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Teachable Voice needs the Accessibility Service to read and operate other apps. Android does not allow enabling it programmatically: tap the button, find 'Teachable Voice' and switch it on." />
-    <Button android:id="@+id/openA11y" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="16dp" android:text="Open Accessibility Settings" />
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+<LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="vertical" android:padding="20dp">
+    <TextView android:id="@+id/status" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="16sp" />
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp"
+        android:text="Android does not allow enabling an Accessibility Service programmatically: tap below, open 'Teachable Voice' and switch it on. The service reads on-screen text to operate apps for you; password fields are never read or stored." />
+    <Button android:id="@+id/openA11y" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="1. Enable Accessibility Service" />
+    <Button android:id="@+id/startVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="2. Start voice assistant" />
+    <EditText android:id="@+id/backendUrl" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="Backend URL" android:inputType="textUri" android:layout_marginTop="12dp" />
+    <Button android:id="@+id/saveUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Save backend URL" />
+    <EditText android:id="@+id/typed" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="Type a command (same as speaking)" android:layout_marginTop="12dp" />
+    <Button android:id="@+id/send" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Send command" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:textStyle="bold" android:text="Learned flows" />
+    <TextView android:id="@+id/flows" android:layout_width="match_parent" android:layout_height="wrap_content" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:textStyle="bold" android:text="Live log" />
+    <TextView android:id="@+id/log" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="12sp" />
 </LinearLayout>
+</ScrollView>

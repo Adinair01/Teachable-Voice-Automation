@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "start": "node src/server.js", "dev": "node --watch src/server.js", "test": "node --test" },
+  "scripts": { "start": "node src/server.js", "dev": "node --watch src/server.js", "test": "node --test test/*.test.js", "smoke": "node scripts/smoke.mjs" },
   "engines": { "node": ">=20" },
   "dependencies": {
     "cors": "^2.8.5",

@@ -13,7 +13,7 @@ d=json.load(sys.stdin); print(len(d),'nodes, pkg',d[0]['pkg'] if d else None)
 for n in d:
   if n['text'] or n['desc']: print(' ',n['id'].split('/')[-1][:28],'|',n['text'][:30],'|',n['desc'][:24],'| click' if n['click'] else '|','scroll' if n['scroll'] else '','edit' if n['edit'] else '')";;
   *) # adb shell re-splits args on spaces, so shell-escape every value ("Aeroplane mode" must stay one arg).
-     esc=$(printf ' %q' "$@")
+     esc=""; [ $# -gt 0 ] && esc=$(printf ' %q' "$@")
      retry adb shell run-as com.tva.teachable rm -f files/result.txt
      retry adb shell "am broadcast -a com.tva.DEBUG --es cmd $cmd$esc" >/dev/null; sleep 1.5
      retry adb shell run-as com.tva.teachable cat files/result.txt; echo;;
