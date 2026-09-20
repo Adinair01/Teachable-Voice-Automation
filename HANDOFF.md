@@ -73,6 +73,51 @@ PENDING for Day 3 gate: taught flow #1 ("open Bluetooth settings", slot page=Blu
   command -> teach mode): all states rendered correctly, screenshots in the session scratchpad.
 - NOTE: these tests added ~3 failed `learn` RunLogs ("play some jazz on the radio") — reset runlogs before final metrics.
 
+## Taught flows + measured run (2026-09-21, ~01:00-01:45 IST)
+THREE TAUGHT FLOWS (all recorded through real touch events on the device, all replayed with NEW slot values):
+1. "open Bluetooth settings" (Settings) -> replays "take me to the Display settings" / "show me the Display settings" /
+   "go to the Wi-Fi settings".
+2. "calculate 5 plus 3" (com.coloros.calculator) -> replays "what is 9 plus 4" (=13), "add 2 and 7", "compute 6 plus 1".
+3. "open the stopwatch in the clock app" (com.coloros.alarmclock) -> replays "open the timer", "switch to the world
+   clock", "show me the stopwatch" (verified visually that the right tab is actually selected).
+
+BUGS FOUND WHILE TEACHING (all fixed + unit-tested):
+- generalise kept the demonstrated resource-id on slot-bound taps (digit_5), and resourceId outranks text on replay,
+  so "7 plus 2" would have tapped 5 again. Slot-bound taps now drop the id.
+- generalise tokenised only text OR contentDesc; the leftover literal ("Stopwatch") could win on replay. Both now.
+- Replayer matched a tab's non-clickable caption and reported SUCCESS while nothing happened (clock opened on the
+  wrong tab). Taps now prefer clickable nodes (SelectorMatcher.findTarget), falling back to the full tree.
+- Slot tokens were resolved in selector.text only, never in contentDesc.
+- Intent/match prompts: the model answers {"num1": 5} and zod rejected the whole extraction -> shared slotMap with
+  z.coerce.string(), plus shared SLOT_RULES ("one value per slot, not a phrase") in src/prompts/slots.js.
+- groqJson now retries once on 429/5xx honouring Retry-After (the Groq free tier throttles bursts of eval calls).
+
+SENSITIVE-STEP GATE — verified on device, both branches, using tools/flows/sensitive_clear.json (a harmless flow whose
+"Clear" tap is marked sensitive; POST it to /api/flows to re-create it):
+- "clear the calculator" -> replay pauses, TTS "Confirm? About to tap Clear.", overlay shows Yes/No.
+- No  -> nothing tapped (display still showed 72), run stops. Yes -> the step runs and the display clears.
+- A declined run is NOT a failed replay any more: RunLog.declined, phone says "Stopped", backend says "Okay, I stopped
+  before that step.", metrics exclude declined runs from the replay denominator and no match row is written.
+- NOTE: the *detection* of sensitive words is unit-tested (services/sensitive.js); the device test used an explicitly
+  flagged harmless step because every genuinely sensitive button on this phone is destructive.
+
+PARAPHRASE EVAL: `npm run eval:paraphrase` (backend/scripts/paraphrase-eval.mjs) runs a labelled set (12 utterances,
+incl. 2 negative controls that must NOT match) through the real matcher against the flows in Mongo.
+- Before the prompt fix: 11/12 ("go to the Wi-Fi settings" did not match the Bluetooth-taught flow -> teach mode).
+- After adding "a slot value may be one never seen before (Bluetooth -> Wi-Fi, Display, Sound)": 12/12 match and slots,
+  and the Wi-Fi paraphrase now replays on the phone too.
+- Run it in the container (Mongo is not published to the host):
+  docker compose run --rm -v "$PWD/backend/scripts:/app/scripts" backend npm run eval:paraphrase
+- A no-match while flows exist is now logged as a FAILED match row, so the metric cannot flatter itself (caveat: a
+  genuinely new task also lands there — the eval set is all paraphrases, so it is right for the measured run).
+
+METRICS after the measured run (runlogs+flows were reset first): learn 3/3 = 100%, replay 10/10 = 100%,
+paraphrase 10/11 = 90.9% (the one miss is the pre-fix Wi-Fi attempt; re-measure after a reset before submission).
+
+PHONE HOUSEKEEPING: a blind coordinate tap on the home screen opened the Camera and its 1s night-exposure pill (no
+photo taken, timer setting verified Off) — never tap coordinates that were not read from a fresh dump/screenshot of the
+CURRENT screen. A test alarm (23:00 "test") that I created was deleted again; the user's own alarms were untouched.
+
 ## Open items
 - Team name (CollegeName_TeamName) — needed before submission filenames.
 - Phone must be re-plugged (see above).
