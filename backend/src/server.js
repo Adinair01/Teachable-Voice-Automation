@@ -6,6 +6,7 @@ import { ZodError } from 'zod';
 import { config } from './lib/config.js';
 import { logger } from './lib/logger.js';
 import { flowsRouter } from './routes/flows.js';
+import { llmRouter } from './routes/llm.js';
 import { metricsRouter } from './routes/metrics.js';
 import { attachGateway } from './ws/gateway.js';
 
@@ -16,6 +17,7 @@ app.use(express.json({ limit: '256kb' }));
 app.get('/health', (_req, res) => res.json({ ok: true, db: mongoose.connection.readyState === 1 }));
 app.use('/api/flows', flowsRouter);
 app.use('/api/metrics', metricsRouter);
+app.use('/api/llm', llmRouter);
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {

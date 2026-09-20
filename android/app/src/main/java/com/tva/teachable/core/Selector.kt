@@ -22,15 +22,21 @@ data class Selector(
     val text: String = "",
     val contentDesc: String = "",
     val className: String = "",
-)
+) {
+    val isEmpty get() = resourceId.isEmpty() && text.isEmpty() && contentDesc.isEmpty() && className.isEmpty()
+}
 
 object SelectorMatcher {
-    /** Returns the best match in the flat node list, or null. Password nodes are never matched by text. */
-    fun find(nodes: List<UiNode>, sel: Selector, position: Int = 0): UiNode? {
+    /**
+     * Best match in the flat node list, or null. Password nodes never match by text.
+     * [textContains] switches text matching from equality to substring (used for slot-bound targets,
+     * e.g. a suggestion "pizza near me" for slot value "pizza").
+     */
+    fun find(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false, position: Int = 0): UiNode? {
         val steps = listOf<(UiNode) -> Boolean>(
             { sel.resourceId.isNotEmpty() && it.resourceId == sel.resourceId },
-            { sel.text.isNotEmpty() && !it.password && it.text.equals(sel.text, ignoreCase = true) },
-            { sel.contentDesc.isNotEmpty() && it.contentDesc.equals(sel.contentDesc, ignoreCase = true) },
+            { sel.text.isNotEmpty() && !it.password && textMatches(it.text, sel.text, textContains) },
+            { sel.contentDesc.isNotEmpty() && textMatches(it.contentDesc, sel.contentDesc, textContains) },
             { sel.className.isNotEmpty() && it.className == sel.className },
         )
         for (pred in steps) {
@@ -39,4 +45,7 @@ object SelectorMatcher {
         }
         return null
     }
+
+    private fun textMatches(actual: String, wanted: String, contains: Boolean) =
+        if (contains) actual.contains(wanted, ignoreCase = true) else actual.equals(wanted, ignoreCase = true)
 }

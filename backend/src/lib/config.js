@@ -6,7 +6,7 @@ const schema = z.object({
   MONGO_URL: z.string().min(1),
   DEEPGRAM_API_KEY: z.string().default(''),
   GROQ_API_KEY: z.string().default(''),
-  GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  GROQ_MODEL: z.string().default('openai/gpt-oss-20b'),
   LOG_LEVEL: z.string().default('info'),
 });
 
