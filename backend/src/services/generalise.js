@@ -26,15 +26,22 @@ export function generalise({ command, intentKey, slots, steps }) {
         const v = tokenise(step.value, example, slot);
         if (v) { step.value = v; step.slotRef = slot; }
       } else if (step.type === 'tap') {
-        const t = tokenise(sel.text, example, slot) ?? tokenise(sel.contentDesc, example, slot);
-        if (t) {
-          if (tokenise(sel.text, example, slot)) sel.text = t; else sel.contentDesc = t;
+        // Tokenise BOTH fields: a leftover literal in the other one would win on replay if the first match misses.
+        const text = tokenise(sel.text, example, slot);
+        const desc = tokenise(sel.contentDesc, example, slot);
+        if (text || desc) {
+          if (text) sel.text = text;
+          if (desc) sel.contentDesc = desc;
           step.slotRef = slot;
         }
       }
     }
-    // The screen a slot-bound tap leads to depends on the slot value, so a recorded expectation would be wrong on replay.
-    if (step.type === 'tap' && step.slotRef) step.expect = {};
+    if (step.type === 'tap' && step.slotRef) {
+      // The screen a slot-bound tap leads to depends on the slot value, so a recorded expectation would be wrong on replay.
+      step.expect = {};
+      // A resource-id names the demonstrated element (digit_5), not the parameterised one, and outranks text on replay.
+      sel.resourceId = '';
+    }
     step.sensitive = isSensitiveStep(step);
     out.push(step);
   }

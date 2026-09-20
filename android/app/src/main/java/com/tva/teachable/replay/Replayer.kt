@@ -58,15 +58,16 @@ class Replayer(
 
     private suspend fun targeted(i: Int, step: FlowStep, slots: Map<String, String>, value: String): StepResult {
         // Selector text may hold slot tokens ("{{query}} near me"); resolved against the CURRENT slot values.
-        val sel = step.selector.copy(text = resolveSlots(step.selector.text, slots))
+        val sel = step.selector.copy(
+            text = resolveSlots(step.selector.text, slots),
+            contentDesc = resolveSlots(step.selector.contentDesc, slots),
+        )
+        val isTap = step.type == StepType.TAP
         val slotValue = step.slotRef?.let { slots[it] }
         val probe = { t: LiveTree ->
             // Taps never target text inputs (a typed value would otherwise match itself).
-            val nodes = if (step.type == StepType.TAP) t.nodes.filter { !it.editable } else t.nodes
-            // Exact resolved match first; for slot-bound taps fall back to "contains the slot value".
-            val hit = SelectorMatcher.find(nodes, sel)
-                ?: slotValue?.takeIf { step.type == StepType.TAP }?.let { SelectorMatcher.find(nodes, Selector(text = it), textContains = true) }
-            hit?.let { t to it }
+            val nodes = if (isTap) t.nodes.filter { !it.editable } else t.nodes
+            SelectorMatcher.findTarget(nodes, sel, slotValue, isTap)?.let { t to it }
         }
 
         var fallback = false
@@ -78,7 +79,7 @@ class Replayer(
             tree.nodes.getOrNull(idx ?: -1)?.let { found = tree to it; fallback = true }
         }
         val (tree, node) = found ?: return StepResult(i, false, error = "target not found")
-        val acted = if (step.type == StepType.TAP) device.tap(tree, node) else device.type(tree, node, value)
+        val acted = if (isTap) device.tap(tree, node) else device.type(tree, node, value)
         return finish(i, step, acted, fallback)
     }
 

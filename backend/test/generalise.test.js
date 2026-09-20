@@ -37,3 +37,23 @@ test('slot-bound taps drop their recorded expectation', () => {
   assert.equal(f.steps[1].selector.text, '{{page}}');
   assert.deepEqual(f.steps[1].expect, {});
 });
+
+test('slot-bound taps drop the demonstrated element id, which would outrank the slot text on replay', () => {
+  const f = generalise({ command: 'calculate 5 plus 3', intentKey: 'calculate', slots: { a: '5' },
+    steps: [{ type: 'launch', value: 'com.coloros.calculator' }, { type: 'tap', selector: { resourceId: 'com.coloros.calculator:id/digit_5', text: '5' } }] });
+  assert.equal(f.steps[1].selector.resourceId, '');
+  assert.equal(f.steps[1].selector.text, '{{a}}');
+});
+test('non-slot taps keep their resource id', () => {
+  const f = generalise({ command: 'open bluetooth', intentKey: 'open_settings', slots: {},
+    steps: [{ type: 'launch', value: 'com.android.settings' }, { type: 'tap', selector: { resourceId: 'x:id/bt', text: 'Bluetooth' } }] });
+  assert.equal(f.steps[1].selector.resourceId, 'x:id/bt');
+});
+
+test('a slot value is tokenised in text AND content-desc, so no literal from the demo survives', () => {
+  const f = generalise({ command: 'open the stopwatch', intentKey: 'open_feature', slots: { feature: 'stopwatch' },
+    steps: [{ type: 'launch', value: 'com.coloros.alarmclock' },
+      { type: 'tap', selector: { text: 'Stopwatch', contentDesc: 'Stopwatch' } }] });
+  assert.equal(f.steps[1].selector.text, '{{feature}}');
+  assert.equal(f.steps[1].selector.contentDesc, '{{feature}}');
+});

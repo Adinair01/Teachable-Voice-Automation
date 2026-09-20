@@ -47,6 +47,22 @@ object SelectorMatcher {
         return null
     }
 
+    /**
+     * Target lookup for one replay step. For taps, clickable nodes are tried first: the same caption often appears
+     * twice (a tab's icon and its label) and only one of them sits on a clickable branch, so plain matching can pick
+     * the dead one and "succeed" without anything happening. Slot-bound taps also fall back to "contains the value".
+     */
+    fun findTarget(nodes: List<UiNode>, sel: Selector, slotValue: String? = null, forTap: Boolean = false): UiNode? {
+        val pools = if (forTap) listOf(nodes.filter { it.clickable }, nodes) else listOf(nodes)
+        for (pool in pools) {
+            find(pool, sel)?.let { return it }
+            if (forTap && !slotValue.isNullOrEmpty()) {
+                find(pool, Selector(text = slotValue), textContains = true)?.let { return it }
+            }
+        }
+        return null
+    }
+
     private fun textMatches(actual: String, wanted: String, contains: Boolean) =
         if (contains) actual.contains(wanted, ignoreCase = true) else actual.equals(wanted, ignoreCase = true)
 }
