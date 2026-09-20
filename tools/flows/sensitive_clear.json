@@ -1,0 +1,10 @@
+{
+  "intentKey": "clear_calculator",
+  "description": "clear the calculator",
+  "appPackage": "com.coloros.calculator",
+  "slots": [],
+  "steps": [
+    { "type": "launch", "selector": {}, "slotRef": null, "value": "com.coloros.calculator", "sensitive": false, "expect": {} },
+    { "type": "tap", "selector": { "contentDesc": "Clear" }, "slotRef": null, "value": "", "sensitive": true, "expect": {} }
+  ]
+}

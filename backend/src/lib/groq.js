@@ -7,7 +7,10 @@ const URL = 'https://api.groq.com/openai/v1/chat/completions';
  * One Groq JSON-mode call, validated against a zod schema. Every LLM feature goes through here
  * so retries, timeouts and output validation live in one place. LLM output is untrusted data.
  */
-export async function groqJson({ system, user, schema, timeoutMs = 15000, fetchImpl = fetch }) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const RETRYABLE = (status) => status === 429 || status >= 500;
+
+export async function groqJson({ system, user, schema, timeoutMs = 15000, fetchImpl = fetch, retries = 1 }) {
   if (!config.GROQ_API_KEY) throw new Error('GROQ_API_KEY not configured');
   const res = await fetchImpl(URL, {
     method: 'POST',
@@ -21,6 +24,13 @@ export async function groqJson({ system, user, schema, timeoutMs = 15000, fetchI
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
+    // Rate limits and 5xx are transient: wait out the server's own Retry-After once before giving up.
+    if (retries > 0 && RETRYABLE(res.status)) {
+      const waitMs = Math.min(10000, (Number(res.headers?.get?.('retry-after')) || 2) * 1000);
+      logger.warn({ status: res.status, waitMs }, 'groq request throttled, retrying');
+      await sleep(waitMs);
+      return groqJson({ system, user, schema, timeoutMs, fetchImpl, retries: retries - 1 });
+    }
     logger.error({ status: res.status }, 'groq request failed');
     throw new Error(`groq http ${res.status}`);
   }

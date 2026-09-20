@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 process.env.MONGO_URL = 'x';
 process.env.GROQ_API_KEY = 'test';
 const { pickElement, pickElementInput } = await import('../src/prompts/pickElement.js');
+const { groqJson } = await import('../src/lib/groq.js');
+const { z } = await import('zod');
 
 const fakeFetch = (content) => async () => ({ ok: true, json: async () => ({ choices: [{ message: { content } }] }) });
 const input = pickElementInput.parse({ intent: 'tap Bluetooth', nodes: [{ i: 3, text: 'Bluetooth' }, { i: 5, text: 'Wi-Fi' }] });
@@ -29,4 +31,16 @@ test('matchFlow prompt treats slot-only differences as the same task', async () 
   assert.equal(r.flowId, 'abc123');
   const bad = await matchFlow('x', [{ _id: 'abc123', description: 'd', slots: [] }], { fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"flowId":"zzz","slots":{}}' } }] }) }) });
   assert.equal(bad.flowId, null); // ids the model invents are rejected
+});
+
+test('a throttled groq call is retried once before failing', async () => {
+  const calls = [];
+  const fetchImpl = async () => {
+    calls.push(1);
+    if (calls.length === 1) return { ok: false, status: 429, headers: { get: () => '0' } };
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '{"index":1}' } }] }) };
+  };
+  const out = await groqJson({ system: 's', user: 'u', schema: z.object({ index: z.number() }), fetchImpl });
+  assert.equal(calls.length, 2);
+  assert.equal(out.index, 1);
 });
