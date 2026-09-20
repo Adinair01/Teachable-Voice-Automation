@@ -15,6 +15,7 @@ app.use(cors({ origin: false })); // phone app is not a browser; dashboard is sa
 app.use(express.json({ limit: '256kb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true, db: mongoose.connection.readyState === 1 }));
+app.use('/dashboard', express.static(new URL('../public', import.meta.url).pathname));
 app.use('/api/flows', flowsRouter);
 app.use('/api/metrics', metricsRouter);
 app.use('/api/llm', llmRouter);

@@ -1,0 +1,29 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teachable Voice — Metrics</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--fg:#e8eaf0;--mut:#8b93a7;--ok:#3ecf8e;--bad:#ff6b6b;--acc:#5b8cff}
+@media(prefers-color-scheme:light){:root{--bg:#f5f6fa;--card:#fff;--fg:#1a1d26;--mut:#606a80}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px system-ui,sans-serif;padding:24px;max-width:960px;margin-inline:auto}
+h1{margin:0 0 4px}p.sub{color:var(--mut);margin:0 0 24px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.card{background:var(--card);border-radius:12px;padding:20px}
+.big{font-size:44px;font-weight:700}.lab{color:var(--mut)}.n{color:var(--mut);font-size:14px}
+table{width:100%;border-collapse:collapse;margin-top:24px}td,th{padding:8px;text-align:left;border-bottom:1px solid #8883}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+</style></head><body>
+<h1>Teachable Voice Automation</h1><p class="sub">Live metrics computed from RunLog data</p>
+<div class="grid" id="cards"></div>
+<h2>Recent runs</h2><table id="runs"><thead><tr><th>When</th><th>Kind</th><th>Result</th><th>Utterance</th></tr></thead><tbody></tbody></table>
+<p class="n">Learn success = demonstrations turned into a saved flow. Replay success = replays that completed every step.
+Paraphrase accuracy = new phrasings matched to the right learned flow and completed.</p>
+<script>
+const pct=r=>r===null?'—':(r*100).toFixed(0)+'%';
+const card=(t,m)=>`<div class="card"><div class="lab">${t}</div><div class="big">${pct(m.rate)}</div><div class="n">${m.successes} / ${m.total} runs</div></div>`;
+async function load(){
+  const [m,r]=await Promise.all([fetch('/api/metrics').then(x=>x.json()),fetch('/api/metrics/runs').then(x=>x.json())]);
+  cards.innerHTML=card('Learn success rate',m.learnSuccess)+card('Replay success rate',m.replaySuccess)+card('Paraphrase match accuracy',m.paraphraseAccuracy);
+  runs.tBodies[0].replaceChildren(...r.runs.map(x=>{const tr=document.createElement('tr');
+    [new Date(x.createdAt).toLocaleString(),x.kind,x.success?'success':'failed',x.utterance||''].forEach((v,i)=>{const td=document.createElement('td');td.textContent=v;if(i==2)td.className=x.success?'ok':'bad';tr.append(td)});return tr}));
+}
+load();setInterval(load,5000);
+</script></body></html>

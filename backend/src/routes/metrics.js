@@ -26,3 +26,8 @@ export async function computeMetrics() {
 metricsRouter.get('/', async (_req, res, next) => {
   try { res.json(await computeMetrics()); } catch (e) { next(e); }
 });
+
+metricsRouter.get('/runs', async (_req, res, next) => {
+  try { res.json({ runs: await RunLog.find().sort({ createdAt: -1 }).limit(30).select('kind success utterance createdAt').lean() }); }
+  catch (e) { next(e); }
+});
