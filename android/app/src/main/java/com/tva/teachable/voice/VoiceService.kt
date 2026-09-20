@@ -161,8 +161,9 @@ class VoiceService : Service() {
         AppState.status.value = "Running: ${flow.description}"
         val gate = ConfirmationGate { step, _ -> askConfirmation("${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc }}".trim()) }
         val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate).run(flow, slots)
-        AppState.status.value = if (r.success) "Done" else "Failed"; AppState.log("replay ${if (r.success) "succeeded" else "FAILED"}: ${r.steps.count { it.ok }}/${flow.steps.size}")
-        client.send(JSONObject().put("type", "run_result").put("flowId", m.optString("flowId")).put("success", r.success)
+        AppState.status.value = if (r.success) "Done" else if (r.declined) "Stopped" else "Failed"
+        AppState.log("replay ${if (r.success) "succeeded" else if (r.declined) "stopped by you" else "FAILED"}: ${r.steps.count { it.ok }}/${flow.steps.size}")
+        client.send(JSONObject().put("type", "run_result").put("flowId", m.optString("flowId")).put("success", r.success).put("declined", r.declined)
             .put("utterance", m.optString("utterance")).put("steps", JSONArray().also { a ->
                 r.steps.forEach { a.put(JSONObject().put("i", it.index).put("ok", it.ok).put("llm", it.usedLlmFallback).put("err", it.error ?: JSONObject.NULL)) } }))
     }

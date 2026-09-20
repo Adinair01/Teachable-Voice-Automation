@@ -25,8 +25,9 @@ fun interface ConfirmationGate { suspend fun confirm(step: FlowStep, slots: Map<
 val DenyAll = ConfirmationGate { _, _ -> false }
 
 data class ReplayConfig(val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300)
-data class StepResult(val index: Int, val ok: Boolean, val usedLlmFallback: Boolean = false, val error: String? = null)
-data class RunResult(val success: Boolean, val steps: List<StepResult>)
+data class StepResult(val index: Int, val ok: Boolean, val usedLlmFallback: Boolean = false, val error: String? = null, val declined: Boolean = false)
+/** [declined] = the user said no to a sensitive step. That is the safety feature working, not a failed replay. */
+data class RunResult(val success: Boolean, val steps: List<StepResult>, val declined: Boolean = false)
 
 class Replayer(
     private val device: Device,
@@ -39,13 +40,13 @@ class Replayer(
         for ((i, step) in flow.steps.withIndex()) {
             val r = runStep(i, step, slots)
             results += r
-            if (!r.ok) return RunResult(false, results)
+            if (!r.ok) return RunResult(false, results, r.declined)
         }
         return RunResult(true, results)
     }
 
     private suspend fun runStep(i: Int, step: FlowStep, slots: Map<String, String>): StepResult {
-        if (step.sensitive && !gate.confirm(step, slots)) return StepResult(i, false, error = "sensitive step not confirmed")
+        if (step.sensitive && !gate.confirm(step, slots)) return StepResult(i, false, error = "sensitive step not confirmed", declined = true)
         val value = resolveSlots(step.value, slots)
         return when (step.type) {
             StepType.LAUNCH -> finish(i, step, device.launch(value) && waitFor { it.nodes.firstOrNull()?.packageName == value })

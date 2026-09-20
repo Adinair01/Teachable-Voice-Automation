@@ -21,6 +21,7 @@ const teachDone = z.object({
 const runResult = z.object({
   flowId: z.string().min(1),
   success: z.boolean(),
+  declined: z.boolean().default(false),
   utterance: z.string().max(500).default(''),
   steps: z.array(z.object({ i: z.number(), ok: z.boolean(), llm: z.boolean().default(false), err: z.string().nullable().default(null) })).max(200).default([]),
 });
@@ -115,9 +116,11 @@ export class Session {
 
   async #logRun(r) {
     const base = { flowId: r.flowId, success: r.success, utterance: r.utterance };
-    await RunLog.create({ ...base, kind: 'replay', stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
-    // A phrasing counts as correctly matched when the matched flow then ran to completion.
-    if (r.utterance) await RunLog.create({ ...base, kind: 'match' });
+    await RunLog.create({ ...base, kind: 'replay', declined: r.declined, stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
+    // A phrasing counts as correctly matched when the matched flow then ran to completion — or when the user
+    // stopped it at a sensitive step, which says nothing about the match being wrong.
+    if (r.utterance && !r.declined) await RunLog.create({ ...base, kind: 'match' });
+    if (r.declined) return this.say('Okay, I stopped before that step.');
     await this.say(r.success ? 'Done.' : 'Sorry, that did not work.');
   }
 

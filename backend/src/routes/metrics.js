@@ -3,16 +3,16 @@ import { RunLog } from '../models/RunLog.js';
 
 export const metricsRouter = Router();
 
-const rate = (rows) => ({
-  total: rows.total,
-  successes: rows.ok,
-  rate: rows.total ? +(rows.ok / rows.total).toFixed(4) : null,
-});
+// Declined replays (the user said no to a sensitive step) leave the denominator: they are not failed automations.
+export const rate = ({ total, ok, declined = 0 }) => {
+  const attempted = total - declined;
+  return { total: attempted, successes: ok, rate: attempted ? +(ok / attempted).toFixed(4) : null, ...(declined ? { declined } : {}) };
+};
 
 // Single aggregation shared by learn / replay / match so the three metrics can't drift apart.
 export async function computeMetrics() {
   const agg = await RunLog.aggregate([
-    { $group: { _id: '$kind', total: { $sum: 1 }, ok: { $sum: { $cond: ['$success', 1, 0] } } } },
+    { $group: { _id: '$kind', total: { $sum: 1 }, ok: { $sum: { $cond: ['$success', 1, 0] } }, declined: { $sum: { $cond: ['$declined', 1, 0] } } } },
   ]);
   const by = Object.fromEntries(agg.map((a) => [a._id, a]));
   const empty = { total: 0, ok: 0 };
