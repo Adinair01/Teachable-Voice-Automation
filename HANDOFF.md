@@ -131,6 +131,17 @@ CURRENT screen. A test alarm (23:00 "test") that I created was deleted again; th
   section (keys, credential redaction, confirmation gate, validation, non-root image, cleartext = dev only) and known
   limitations (Chrome omnibox, no long-press/drag capture, GROQ_MODEL deviation, unbound slots, socket-bound session).
 
+## Final-stretch session 2026-09-21 (evening) — deliverables built
+- Docker verified from scratch with the README's commands (`down -v`, `up -d --build`): /health ok, /dashboard up, metrics empty, container user = node (non-root), 15 unit tests pass.
+- BUGS FOUND + FIXED while re-teaching (all committed): (1) new-task teach slots came from the matcher's side-output and could be a whole phrase ("5 plus 3") -> demo never matched -> learn failed; now always from extractIntent. (2) intent prompt let "open the stopwatch in the clock app" get NO slots (replay would tap the wrong tab and still report success); rule added: page/tab/section/number named in the command is always a slot. (3) matcher missed "open the timer" (no app name); prompt now decides by the flow's own slots + example. (4) eval compared slot NAMES the model invents; now compares values. Eval = 13/13 match, 13/13 slots.
+- FINAL MEASURED METRICS (flows+runlogs reset, 3 flows taught on the phone, 9 paraphrased replays): learn 3/3, replay 9/9, paraphrase 9/9 (all 100%). Rows for the *teach-trigger* commands (a first-time task while other flows exist) were deleted from the match metric: they are new tasks, not paraphrases. Small sample, one phone.
+- DEMO VIDEO: `adb screenrecord` is blocked on the Realme (permission denied everywhere), so the video is built from ~1.8 fps screenshots of a real teach -> replay -> decline -> confirm run + macOS `say` narration + PIL captions (submission/*_Demo_Video.mp4, 2m20s). Not the phone's TTS audio. Build scripts were scratchpad-only.
+- DECK: submission/*_Presentation.pptx (python-pptx, 10 slides). NOT visually rendered (no LibreOffice here) — open it and eyeball overflow.
+- Filenames use SRM_University_Kattankulathur_Chennai_Ciphera_s (spaces/commas/apostrophe stripped) — rename if the portal wants the literal string.
+- SECRETS: working tree clean, backend/.env gitignored, BUT commit 49d20eb (initial scaffold) contains REAL Deepgram + Groq keys in backend/.env.example. Keys must be rotated and history rewritten BEFORE any push/tag. Not done — awaiting user decision. No remote is configured yet.
+- Phone: a stray Airplane-mode toggle happened during the measured run (cause not pinned down; restored with `cmd connectivity airplane-mode disable`). Do not use blind coordinate taps.
+- Phone-side gotcha: typed "yes"/"no" via the debug `say` channel are NEW commands, not confirmation answers — answer the gate with the overlay Yes/No buttons.
+
 ## Next steps (in order)
 1. **Team name** (CollegeName_TeamName) — blocks every submission filename. ASK before generating any.
 2. Fresh-verify Docker from a clean state (`docker compose down -v && docker compose up -d --build`) and re-check
