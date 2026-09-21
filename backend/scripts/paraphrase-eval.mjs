@@ -22,7 +22,7 @@ const CASES = [
   { utterance: 'send a message to mum on WhatsApp', expect: null },
 ];
 
-const norm = (s) => String(s ?? '').trim().toLowerCase();
+const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 await mongoose.connect(config.MONGO_URL);
 const flows = await Flow.find().sort({ createdAt: -1 }).limit(100).lean();
@@ -36,8 +36,9 @@ for (const c of CASES) {
   const m = await matchFlow(c.utterance, flows);
   const got = m.flowId ? flows.find((f) => String(f._id) === m.flowId) : null;
   const matchOk = String(got?._id ?? null) === String(want?._id ?? null);
-  // Slot check only where the case states the values it expects; slot NAMES come from the flow, values from the model.
-  const slotOk = !c.slots || Object.entries(c.slots).every(([k, v]) => norm(m.slots?.[k]) === norm(v));
+  // Slot NAMES are chosen by the model at teach time, so check that each expected VALUE appears among the extracted ones.
+  const got_values = new Set(Object.values(m.slots ?? {}).map(norm));
+  const slotOk = !c.slots || Object.values(c.slots).every((v) => got_values.has(norm(v)));
   results.push({ ...c, got: got?.description ?? null, slots: m.slots, matchOk, slotOk });
 }
 
