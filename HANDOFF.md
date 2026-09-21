@@ -142,6 +142,10 @@ CURRENT screen. A test alarm (23:00 "test") that I created was deleted again; th
 - Phone: a stray Airplane-mode toggle happened during the measured run (cause not pinned down; restored with `cmd connectivity airplane-mode disable`). Do not use blind coordinate taps.
 - Phone-side gotcha: typed "yes"/"no" via the debug `say` channel are NEW commands, not confirmation answers — answer the gate with the overlay Yes/No buttons.
 
+- 2026-09-21 late: built-in 'open <app>' (phone sends installed apps on connect, backend resolves exact label, sends launch_app). Verified on device with typed commands (Gmail, Chrome, Camera opened; taught 'open Bluetooth settings' still wins; unknown app -> teach mode). Cause of the user's report: opening an app was never a built-in and cannot be taught (recorder ignores launcher taps, learn needs >=1 non-launch step). Mic/STT path not re-tested after this change.
+- Video now has an 'open any app' scene (Calculator + Clock; Gmail/Settings frames were dropped because they showed personal data) and the deck has a matching slide (11 slides).
+- Commits/PRs: author Aditya Nair <adityanair5002@gmail.com>, NO Claude trailers. History was rewritten once (keys purged, identity fixed); backup bundle in the session scratchpad only.
+
 ## Next steps (in order)
 1. **Team name** (CollegeName_TeamName) — blocks every submission filename. ASK before generating any.
 2. Fresh-verify Docker from a clean state (`docker compose down -v && docker compose up -d --build`) and re-check

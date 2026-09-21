@@ -124,6 +124,9 @@ two ways to talk:
 | **Press and hold** | records while held, sends on release (blue → red) |
 | **Double-tap** | hands-free: keep talking with your hands free, **tap once** to send (green, pulsing) |
 
+**To open an app:** say *"open Gmail"* / *"open the Clock app"*. This is built in (no teaching): the phone reports its
+installed apps and the backend matches the exact app name. An unknown name falls back to teach mode.
+
 **To teach:** say a command it does not know. The bubble turns amber ("TEACH MODE"), the assistant says *"Do whatever
 you want to do on the screen so I can learn from it"* — do the task once, then say **"done"** or tap **Done teaching**.
 
