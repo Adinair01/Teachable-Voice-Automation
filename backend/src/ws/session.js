@@ -7,6 +7,7 @@ import { extractIntent } from '../prompts/intent.js';
 import { matchFlow } from '../prompts/matchFlow.js';
 import { generalise } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
+import { parseOpenApp, resolveApp } from '../services/openApp.js';
 
 /** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
 const TEACH_PROMPT = 'Do whatever you want to do on the screen so I can learn from it.';
@@ -18,6 +19,9 @@ const teachDone = z.object({
   slots: z.record(z.string().max(200)).default({}),
   steps: z.array(z.object({ type: z.string() }).passthrough()).max(200),
 });
+const appList = z.object({
+  apps: z.array(z.object({ label: z.string().min(1).max(120), package: z.string().regex(/^[\w.]{1,200}$/) })).max(1000),
+});
 const runResult = z.object({
   flowId: z.string().min(1),
   success: z.boolean(),
@@ -28,7 +32,7 @@ const runResult = z.object({
 
 /** One phone connection: audio -> STT -> intent/match -> replay | teach; teach_done -> generalise -> save. */
 export class Session {
-  constructor(socket) { this.socket = socket; this.stt = null; this.sttMode = 'command'; this.teaching = null; }
+  constructor(socket) { this.socket = socket; this.stt = null; this.sttMode = 'command'; this.teaching = null; this.apps = []; }
 
   send(obj) { if (this.socket.readyState === 1) this.socket.send(JSON.stringify(obj)); }
 
@@ -61,6 +65,7 @@ export class Session {
         return;
       case 'say_request': return this.say(z.string().min(1).max(300).parse(msg.text));
       case 'audio_end': return this.#endAudio();
+      case 'apps': this.apps = appList.parse(msg).apps; return;
       case 'command': return this.handleCommand(z.string().min(1).max(500).parse(msg.text));
       case 'teach_done': return this.#learn(teachDone.parse(msg));
       case 'teach_cancel': this.teaching = null; return this.#logLearn(false, msg.command);
@@ -82,6 +87,11 @@ export class Session {
     // Only "done" is meaningful while teaching; anything else would otherwise vanish without a word back.
     if (this.teaching) {
       return DONE.test(text) ? this.send({ type: 'teach_finish' }) : this.say("I'm still watching. Say done when you have finished.");
+    }
+    const app = resolveApp(parseOpenApp(text), this.apps);
+    if (app) {
+      this.send({ type: 'launch_app', package: app.package, label: app.label });
+      return this.say(`Opening ${app.label}.`);
     }
     const flows = await Flow.find().sort({ createdAt: -1 }).limit(100).lean();
     const m = flows.length ? await matchFlow(text, flows) : { ...(await extractIntent(text)), flowId: null };
@@ -111,7 +121,9 @@ export class Session {
       this.send({ type: 'teach_failed' }); // lets the phone drop out of "Saving…" instead of hanging there
       return this.say(g.slots.length && !g.slotsFound
         ? `I couldn't find "${g.slots[0].example}" in what you did. Let's try again.`
-        : "I didn't see any actions. Let's try again.");
+        : actionable === 0 && g.steps.length
+          ? "I only saw an app being opened. To open an app, just say open and its name. Teach me a task inside the app instead."
+          : "I didn't see any actions. Let's try again.");
     }
     const { slotsFound, ...doc } = g;
     const flow = await Flow.create(flowInput.parse(doc));

@@ -72,6 +72,7 @@ class VoiceService : Service() {
     private fun onConnection(up: Boolean) {
         AppState.connected.value = up
         AppState.log(if (up) "connected" else "disconnected")
+        if (up) client.send(JSONObject().put("type", "apps").put("apps", InstalledApps.toJson(this)))
         if (up && teach != null) {
             TvaAccessibilityService.instance?.stopRecording()
             teach = null; AppState.teaching.value = false; AppState.status.value = "Idle"
@@ -127,6 +128,7 @@ class VoiceService : Service() {
             "teach_start" -> startTeaching(m)
             "teach_finish" -> scope.launch { finishTeachingNow() }
             "replay" -> scope.launch { runReplay(m) }
+            "launch_app" -> openApp(m.optString("package"), m.optString("label"))
             "learned" -> { AppState.status.value = "Learned"; AppState.log("learned flow (${m.optInt("steps")} steps)") }
             "teach_failed" -> AppState.status.value = "Idle"
             "error" -> AppState.log("server error: ${m.optString("error")}")
@@ -137,6 +139,11 @@ class VoiceService : Service() {
         AppState.log("you: $text")
         confirm?.let { if (awaitingConfirmSpeech && text.isNotBlank()) it.complete(ConfirmText.isYes(text)) }
         if (!AppState.teaching.value) AppState.status.value = "Idle"
+    }
+
+    private fun openApp(pkg: String, label: String) {
+        val svc = TvaAccessibilityService.instance ?: return AppState.log("Accessibility Service is not enabled")
+        AppState.log(if (svc.launch(pkg)) "opened $label" else "could not open $label")
     }
 
     private fun startTeaching(m: JSONObject) {
