@@ -118,6 +118,32 @@ PHONE HOUSEKEEPING: a blind coordinate tap on the home screen opened the Camera 
 photo taken, timer setting verified Off) — never tap coordinates that were not read from a fresh dump/screenshot of the
 CURRENT screen. A test alarm (23:00 "test") that I created was deleted again; the user's own alarms were untouched.
 
+## Session end 2026-09-21 ~02:00 IST — TTS confirmed audible, README written
+- **Spoken replies verified on the device, not assumed**: backend `say()` -> Deepgram Aura mp3 -> binary WS frame ->
+  `voice/AudioPlayer` (MediaPlayer, media stream). Proof: Android logged
+  `SystemUi--Volume: onMultiMediaStateChange ... packageName=com.tva.teachable` with the audio HAL waking at the same
+  moment. **The phone's media volume is 0** (speaker: 0) — every test tonight was silent because of that. I raised it
+  to 8 for the check and put it back to 0 as found. TURN MEDIA VOLUME UP before recording the demo video.
+- **README.md written** (graded deliverable): pitch + architecture diagram, repo layout, backend via
+  `cp backend/.env.example backend/.env` + `docker compose up -d --build` + endpoint table, APK build/install with
+  CLI-only Gradle, `adb reverse` vs LAN URL, first-run steps (accessibility must be enabled by hand), how to teach and
+  replay (drag / hold / double-tap / confirmation), flow schema, tests + smoke + paraphrase eval + dashboard, security
+  section (keys, credential redaction, confirmation gate, validation, non-root image, cleartext = dev only) and known
+  limitations (Chrome omnibox, no long-press/drag capture, GROQ_MODEL deviation, unbound slots, socket-bound session).
+
+## Next steps (in order)
+1. **Team name** (CollegeName_TeamName) — blocks every submission filename. ASK before generating any.
+2. Fresh-verify Docker from a clean state (`docker compose down -v && docker compose up -d --build`) and re-check
+   `/health` + `/dashboard` against the README's exact commands.
+3. Clean metrics run for the numbers that go in the PPT: reset runlogs, teach the three flows, replay the eval set,
+   screenshot `/dashboard`.
+4. Demo video (<=5 min): teach trigger + manual demo + second command with a different slot + confirmation before a
+   sensitive step. Media volume up; overlay states are visible on screen.
+5. Presentation (problem, solution, architecture, why Accessibility beats per-app integrations, metrics, limitations,
+   "production = OEM system service").
+6. Secrets scan, commit everything, then WAIT for Aditya's go-ahead before creating/pushing the
+   `PRISM_GENAI_HACKATHON_Y2026` tag.
+
 ## Open items
 - Team name (CollegeName_TeamName) — needed before submission filenames.
 - Phone must be re-plugged (see above).
