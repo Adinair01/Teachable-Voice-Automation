@@ -16,6 +16,7 @@ const CASES = [
   { utterance: 'add 2 and 7 on the calculator', expect: 'calculate', slots: { num1: '2', num2: '7' } },
   { utterance: 'compute 6 plus 1', expect: 'calculate', slots: { num1: '6', num2: '1' } },
   { utterance: 'open the timer in the clock app', expect: 'stopwatch', slots: { feature: 'timer' } },
+  { utterance: 'open the timer', expect: 'stopwatch', slots: { feature: 'timer' } },
   { utterance: 'switch to the world clock', expect: 'stopwatch', slots: { feature: 'world clock' } },
   { utterance: 'show me the stopwatch', expect: 'stopwatch', slots: { feature: 'stopwatch' } },
   { utterance: 'order me a pizza from Zomato', expect: null },

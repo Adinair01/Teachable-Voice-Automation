@@ -93,8 +93,10 @@ export class Session {
     // No flow matched although some exist: for an eval set of paraphrases that is a miss, and the metric would
     // flatter itself if only matched-and-replayed runs were ever counted. (A genuinely new task lands here too.)
     if (flows.length) await RunLog.create({ kind: 'match', success: false, utterance: text });
-    const intent = m.intentKey ? m : await extractIntent(text);
-    this.teaching = { command: text, intentKey: intent.intentKey, slots: intent.slots ?? m.slots ?? {} };
+    // Slots for a new task always come from the dedicated extractor: the matcher's side-output for a non-match can
+    // return a whole phrase ("5 plus 3") as one slot, which then cannot be found in the demonstration.
+    const intent = await extractIntent(text);
+    this.teaching = { command: text, intentKey: intent.intentKey, slots: intent.slots ?? {} };
     this.send({ type: 'teach_start', ...this.teaching });
     return this.say(TEACH_PROMPT);
   }
