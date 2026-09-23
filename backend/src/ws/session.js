@@ -4,6 +4,7 @@ import { SttStream, synthesize } from '../lib/deepgram.js';
 import { Flow } from '../models/Flow.js';
 import { RunLog } from '../models/RunLog.js';
 import { extractIntent } from '../prompts/intent.js';
+import { normaliseSlots } from '../prompts/slots.js';
 import { matchFlow } from '../prompts/matchFlow.js';
 import { generalise } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
@@ -99,7 +100,7 @@ export class Session {
     const m = flows.length ? await matchFlow(text, flows) : { ...(await extractIntent(text)), flowId: null };
     if (m.flowId) {
       const flow = flows.find((f) => String(f._id) === m.flowId);
-      this.send({ type: 'replay', flowId: m.flowId, utterance: text, flow, slots: m.slots });
+      this.send({ type: 'replay', flowId: m.flowId, utterance: text, flow, slots: normaliseSlots(m.slots) });
       return this.say('Okay, doing that now.');
     }
     // No flow matched although some exist: for an eval set of paraphrases that is a miss, and the metric would
@@ -131,7 +132,7 @@ export class Session {
     const flow = await Flow.create(flowInput.parse(doc));
     await this.#logLearn(true, body.command, flow._id);
     this.send({ type: 'learned', flowId: String(flow._id), steps: g.steps.length });
-    return this.say('Got it. I learned that.');
+    return this.say(`Learned: ${flow.description}.`);
   }
 
   #logLearn(success, utterance, flowId) { return RunLog.create({ kind: 'learn', success, utterance, flowId }); }

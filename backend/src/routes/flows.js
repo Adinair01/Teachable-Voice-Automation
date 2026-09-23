@@ -1,16 +1,17 @@
 import { Router } from 'express';
 import mongoose from 'mongoose';
 import { z } from 'zod';
-import { Flow } from '../models/Flow.js';
+import { Flow, STEP_TYPES } from '../models/Flow.js';
 
 export const flowsRouter = Router();
 
 const selector = z.object({
   resourceId: z.string().max(200).default(''), text: z.string().max(300).default(''),
   contentDesc: z.string().max(300).default(''), className: z.string().max(200).default(''),
+  near: z.string().max(300).default(''),
 });
 const step = z.object({
-  type: z.enum(['launch', 'tap', 'type', 'scroll', 'back', 'wait']),
+  type: z.enum(STEP_TYPES),
   selector: selector.default({}),
   slotRef: z.string().max(40).nullable().default(null),
   value: z.string().max(500).default(''),

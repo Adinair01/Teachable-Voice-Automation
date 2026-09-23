@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import com.tva.teachable.core.UiNode
+import com.tva.teachable.core.area
 
 /** Performs actions on a node found in a [LiveTree]. Matching lives in SelectorMatcher — not duplicated here. */
 class ActionExecutor(private val service: AccessibilityService) {
@@ -22,7 +23,8 @@ class ActionExecutor(private val service: AccessibilityService) {
     }
 
     fun scroll(tree: LiveTree, forward: Boolean = true): Boolean {
-        val target = tree.nodes.firstOrNull { it.scrollable } ?: return false
+        // The biggest scrollable is the page itself; the first one is often a horizontal strip of filter chips.
+        val target = tree.nodes.filter { it.scrollable }.maxByOrNull { it.area } ?: return false
         return tree.handle(target).performAction(
             if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
         )

@@ -269,6 +269,28 @@ The old screenshot demo video is superseded: new video = one unedited scrcpy rec
   device-tested (would need logging out) — unit-tested only.
 - New debug cmds: `guard` (ScreenGuard on live screen), `check` (guard verdict for a tap target, dry run).
 
+### T4/T5/T6 machinery — BUILT, unit-tested, row anchoring dry-run verified on Zomato (2026-09-23 afternoon)
+- Work address added by Aditya (label "Work", in Domino's range). NOTE: Zomato's global location is now Work, so the
+  cart defaults to Work — test T6 both ways ("deliver to home" as well as "to work").
+- Row anchors (T4): Recorder sends `context` (row captions) for taps on controls that repeat on screen; generalise
+  turns the caption naming a slot value into `selector.near` ("{{item}}"). Replay (`SelectorMatcher.target`, shared
+  with the debug channel) only taps a same-kind control in a row naming near/slot value — never "the first ADD", no
+  LLM fallback; scrolls (largest scrollable) up to 3x. Verified dry-run on the real Farmhouse search: near
+  "Farmhouse Pizza" -> its ADD, the two "Double Cheeseburst - Farmhouse" rows -> their own ADDs, Pepperoni -> no target.
+  NOTE: Zomato's ADD label is in contentDesc, not text.
+- New step types `set_quantity` (T5: − n + stepper in the item's row, taps and RE-READS until count == slot, 1..20)
+  and `choose_address` (T6: opens "… mins to Home"/"Deliver to" header, taps the saved label, verifies header says
+  "to <label>"; unknown label -> closes picker, "there's no saved address called X"). generalise adds them plus
+  optional slots quantity(1)/address(home) to any command matching order|buy|purchase|deliver|get me, inserted before
+  the first sensitive step (else at the end). Skipped on replay when the slot is empty.
+- Slot matching is case/punctuation-insensitive ("dominos" typed binds "Domino's") with a longest-word fallback
+  ("Margherita pizza" spoken, "margherita" typed). SLOT_RULES reserves quantity/address/item/restaurant names;
+  `normaliseSlots` turns "two" -> "2", "my work" -> "work". Learn reply is now "Learned: <command>."
+- Interstitials: a recorded step whose target never shows is skipped when the NEXT step's target is already there
+  (the "Unlock 20% OFF… Continue" upsell). Tree now merges all windows of the foreground app (tooltips are separate
+  windows).
+- Tests: Kotlin 37 pass (RowContextTest 6, ReplayerSlotsTest 5 new), backend 21 pass.
+
 ## Next steps (in order — 2026-09-23 scope)
 1. PHONE (needs Aditya): connect USB + `adb reverse tcp:3100 tcp:3100`; install Zomato, log in, saved Home + Work.
 2. Dump Zomato's tree (`tools/a11y.sh show`) on home, search, restaurant menu, item customisation sheet, cart, address

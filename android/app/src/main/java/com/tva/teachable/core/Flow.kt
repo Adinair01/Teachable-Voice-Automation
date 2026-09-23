@@ -3,7 +3,11 @@ package com.tva.teachable.core
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class StepType { LAUNCH, TAP, TYPE, SCROLL, BACK, WAIT;
+/**
+ * SET_QUANTITY / CHOOSE_ADDRESS are not recorded taps: they are added to ordering flows so a quantity or delivery
+ * address never shown in the demo can still be asked for ("two pizzas", "deliver to work"). Skipped when the slot is empty.
+ */
+enum class StepType { LAUNCH, TAP, TYPE, SCROLL, BACK, WAIT, SET_QUANTITY, CHOOSE_ADDRESS;
     companion object { fun parse(s: String) = valueOf(s.uppercase()) }
 }
 
@@ -16,6 +20,8 @@ data class FlowStep(
     val value: String = "",
     val sensitive: Boolean = false,
     val expect: Expect = Expect(),
+    /** Recording only: captions of the tapped element's row, so the backend can turn one into selector.near. */
+    val context: List<String> = emptyList(),
 )
 
 data class Flow(val intentKey: String, val description: String, val appPackage: String, val steps: List<FlowStep>)
@@ -46,6 +52,7 @@ object FlowJson {
                 text = s?.optString("text").orEmpty(),
                 contentDesc = s?.optString("contentDesc").orEmpty(),
                 className = s?.optString("className").orEmpty(),
+                near = s?.optString("near").orEmpty(),
             ),
             slotRef = o.optString("slotRef").takeIf { it.isNotEmpty() && it != "null" },
             value = o.optString("value"),
@@ -57,11 +64,12 @@ object FlowJson {
     fun stepToJson(step: FlowStep): JSONObject = JSONObject()
         .put("type", step.type.name.lowercase())
         .put("selector", JSONObject().put("resourceId", step.selector.resourceId).put("text", step.selector.text)
-            .put("contentDesc", step.selector.contentDesc).put("className", step.selector.className))
+            .put("contentDesc", step.selector.contentDesc).put("className", step.selector.className).put("near", step.selector.near))
         .put("slotRef", step.slotRef ?: JSONObject.NULL)
         .put("value", step.value)
         .put("sensitive", step.sensitive)
         .put("expect", JSONObject().put("package", step.expect.packageName).put("textContains", step.expect.textContains))
+        .apply { if (step.context.isNotEmpty()) put("context", JSONArray(step.context)) }
 
     fun toJson(steps: List<FlowStep>): JSONArray = JSONArray().also { a -> steps.forEach { a.put(stepToJson(it)) } }
 }

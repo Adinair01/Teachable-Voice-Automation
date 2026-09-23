@@ -21,6 +21,14 @@ object UiTreeReader {
         return LiveTree(nodes, handles)
     }
 
+    /** Several windows as one tree (a popup and the page under it); each root starts again at depth 0. */
+    fun readLive(roots: List<AccessibilityNodeInfo>): LiveTree {
+        val nodes = ArrayList<UiNode>()
+        val handles = ArrayList<AccessibilityNodeInfo>()
+        roots.forEach { walk(it, 0, nodes, handles) }
+        return LiveTree(nodes, handles)
+    }
+
     fun toUiNode(n: AccessibilityNodeInfo, index: Int = 0, depth: Int = 0): UiNode {
         val r = Rect().also { n.getBoundsInScreen(it) }
         val pwd = n.isPassword

@@ -57,3 +57,41 @@ test('a slot value is tokenised in text AND content-desc, so no literal from the
   assert.equal(f.steps[1].selector.text, '{{feature}}');
   assert.equal(f.steps[1].selector.contentDesc, '{{feature}}');
 });
+
+// The Zomato demo as the recorder sends it: search typed without the apostrophe, one identical ADD per dish row.
+test('ordering demo: loose slot matching, row-anchored ADD, implied quantity + address steps before checkout', () => {
+  const tap = (selector, extra = {}) => ({ type: 'tap', selector, ...extra });
+  const f = generalise({
+    command: "Order a Margherita pizza from Domino's on Zomato",
+    intentKey: 'order_food',
+    slots: { item: 'Margherita pizza', restaurant: "Domino's" },
+    steps: [
+      { type: 'launch', value: 'com.application.zomato' },
+      { type: 'type', selector: { resourceId: 'z:id/edittext' }, value: 'dominos' },
+      tap({ text: "Domino's Pizza" }),
+      { type: 'type', selector: { resourceId: 'z:id/edittext' }, value: 'margherita' },
+      tap({ resourceId: 'z:id/text_view_title', text: 'ADD' }, { context: ['Margherita Pizza', 'Classic delight with 100% real mozzarella', '₹114', 'ADD'] }),
+      tap({ resourceId: 'z:id/button', text: 'Add item ₹114' }),
+      tap({ resourceId: 'z:id/tv_action_text', text: 'Place Order' }),
+    ],
+  });
+  const [, search, card, dish, add, , ...rest] = f.steps;
+  assert.equal(search.value, '{{restaurant}}');
+  assert.equal(card.selector.text, '{{restaurant}} Pizza');
+  assert.equal(dish.value, '{{item}}');
+  assert.equal(add.selector.near, '{{item}}');
+  assert.equal(add.slotRef, 'item');
+  assert.equal(add.selector.resourceId, '');
+  assert.equal(add.context, undefined, 'recording-only context is not stored');
+  assert.deepEqual(rest.map((s) => s.type), ['set_quantity', 'choose_address', 'tap'], 'inserted before the sensitive checkout tap');
+  assert.equal(rest[0].selector.near, '{{item}}');
+  assert.ok(rest[2].sensitive);
+  assert.deepEqual(f.slots.map((s) => s.name), ['item', 'restaurant', 'quantity', 'address']);
+});
+
+test('non-ordering flows get no implied slots', () => {
+  const f = generalise({ command: 'open bluetooth settings', intentKey: 'open_settings', slots: { page: 'Bluetooth' },
+    steps: [{ type: 'launch', value: 'com.android.settings' }, { type: 'tap', selector: { text: 'Bluetooth' } }] });
+  assert.deepEqual(f.slots.map((s) => s.name), ['page']);
+  assert.ok(!f.steps.some((s) => s.type === 'set_quantity'));
+});

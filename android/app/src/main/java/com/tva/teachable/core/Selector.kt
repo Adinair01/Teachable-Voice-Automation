@@ -16,12 +16,21 @@ data class UiNode(
     val password: Boolean,
 )
 
-/** Step target description. Priority: resourceId > text > contentDesc > className. */
+/** Screen area from the flattened bounds "left top right bottom"; 0 when unknown. */
+val UiNode.area: Long
+    get() = bounds.split(' ').mapNotNull { it.toLongOrNull() }.takeIf { it.size == 4 }
+        ?.let { (l, t, r, b) -> maxOf(0, r - l) * maxOf(0, b - t) } ?: 0
+
+/**
+ * Step target description. Priority: resourceId > text > contentDesc > className.
+ * [near] anchors the target to its row's caption ("{{item}} Pizza") when the same control repeats per row.
+ */
 data class Selector(
     val resourceId: String = "",
     val text: String = "",
     val contentDesc: String = "",
     val className: String = "",
+    val near: String = "",
 ) {
     val isEmpty get() = resourceId.isEmpty() && text.isEmpty() && contentDesc.isEmpty() && className.isEmpty()
 }
@@ -33,6 +42,12 @@ object SelectorMatcher {
      * e.g. a suggestion "pizza near me" for slot value "pizza").
      */
     fun find(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false, position: Int = 0): UiNode? {
+        val hits = findAll(nodes, sel, textContains)
+        return hits.getOrNull(position) ?: hits.firstOrNull()
+    }
+
+    /** Every node matching the highest-priority field that matches anything (all the ADDs, not just the first). */
+    fun findAll(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false): List<UiNode> {
         val steps = listOf<(UiNode) -> Boolean>(
             { sel.resourceId.isNotEmpty() && it.resourceId == sel.resourceId },
             { sel.text.isNotEmpty() && !it.password && textMatches(it.text, sel.text, textContains) },
@@ -42,9 +57,9 @@ object SelectorMatcher {
         )
         for (pred in steps) {
             val hits = nodes.filter(pred)
-            if (hits.isNotEmpty()) return hits.getOrNull(position) ?: hits.first()
+            if (hits.isNotEmpty()) return hits
         }
-        return null
+        return emptyList()
     }
 
     /**
@@ -61,6 +76,18 @@ object SelectorMatcher {
             }
         }
         return null
+    }
+
+    /**
+     * The node a tap/type step acts on — the single rule shared by replay and the debug channel. Taps never target text
+     * inputs (a typed value would otherwise match itself); a [Selector.near] anchor restricts candidates to the row
+     * naming it (or, failing that, [slotValue]) and never falls back to "the first one".
+     */
+    fun target(nodes: List<UiNode>, sel: Selector, slotValue: String?, forTap: Boolean): UiNode? {
+        val pool = if (forTap) nodes.filter { !it.editable } else nodes
+        if (sel.near.isEmpty()) return findTarget(pool, sel, slotValue, forTap)
+        val same = findAll(pool, sel.copy(near = "")).toSet()
+        return RowContext.pick(nodes, same.toList(), sel.near, slotValue) { it in same }
     }
 
     private fun textMatches(actual: String, wanted: String, contains: Boolean) =

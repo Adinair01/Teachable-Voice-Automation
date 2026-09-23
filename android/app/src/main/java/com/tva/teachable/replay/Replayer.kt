@@ -1,14 +1,15 @@
 package com.tva.teachable.replay
 
 import com.tva.teachable.a11y.LiveTree
-import com.tva.teachable.core.Flow
 import com.tva.teachable.core.Boundary
 import com.tva.teachable.core.BoundaryKind
+import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
 import com.tva.teachable.core.ScreenGuard
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.SelectorMatcher
 import com.tva.teachable.core.StepType
+import com.tva.teachable.core.Steppers
 import com.tva.teachable.core.UiNode
 import com.tva.teachable.core.resolveSlots
 import kotlinx.coroutines.delay
@@ -27,7 +28,7 @@ interface Device {
 fun interface ConfirmationGate { suspend fun confirm(step: FlowStep, slots: Map<String, String>): Boolean }
 val DenyAll = ConfirmationGate { _, _ -> false }
 
-data class ReplayConfig(val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300)
+data class ReplayConfig(val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300, val scrollTries: Int = 3)
 data class StepResult(
     val index: Int, val ok: Boolean, val usedLlmFallback: Boolean = false, val error: String? = null,
     val declined: Boolean = false, val handover: Boundary? = null,
@@ -48,7 +49,7 @@ class Replayer(
     suspend fun run(flow: Flow, slots: Map<String, String>): RunResult {
         val results = ArrayList<StepResult>()
         for ((i, step) in flow.steps.withIndex()) {
-            val r = runStep(i, step, slots)
+            val r = runStep(i, step, flow.steps.getOrNull(i + 1), slots)
             results += r
             r.handover?.let { return RunResult(it.kind == BoundaryKind.PAYMENT, results, handover = it) }
             if (!r.ok) return RunResult(false, results, r.declined)
@@ -56,7 +57,7 @@ class Replayer(
         return RunResult(true, results, handover = ScreenGuard.screen(device.tree().nodes))
     }
 
-    private suspend fun runStep(i: Int, step: FlowStep, slots: Map<String, String>): StepResult {
+    private suspend fun runStep(i: Int, step: FlowStep, next: FlowStep?, slots: Map<String, String>): StepResult {
         // Checked on the live screen before every step, whatever was flagged while teaching: nothing but launching
         // the app (which touches no screen) is allowed once a credential or payment screen is up.
         if (step.type != StepType.LAUNCH && step.type != StepType.WAIT) {
@@ -65,31 +66,40 @@ class Replayer(
         if (step.type == StepType.TAP) ScreenGuard.actionText("${step.selector.text} ${step.selector.contentDesc}")?.let { return handover(i, it) }
         if (step.sensitive && !gate.confirm(step, slots)) return StepResult(i, false, error = "sensitive step not confirmed", declined = true)
         val value = resolveSlots(step.value, slots)
+        val slotValue = step.slotRef?.let { slots[it] }?.trim().orEmpty()
         return when (step.type) {
             StepType.LAUNCH -> finish(i, step, device.launch(value) && waitFor { it.nodes.firstOrNull()?.packageName == value })
             StepType.WAIT -> { delay(value.toLongOrNull() ?: 500); StepResult(i, true) }
             StepType.BACK -> finish(i, step, device.back())
             StepType.SCROLL -> finish(i, step, device.scroll(device.tree()))
-            StepType.TAP, StepType.TYPE -> targeted(i, step, slots, value)
+            StepType.TAP, StepType.TYPE -> targeted(i, step, next, slots, value)
+            // Optional by design: "order a pizza" keeps the app's own quantity and address.
+            StepType.SET_QUANTITY -> if (slotValue.isEmpty()) StepResult(i, true) else quantity(i, step, slots, slotValue)
+            StepType.CHOOSE_ADDRESS -> if (slotValue.isEmpty()) StepResult(i, true) else address(i, slotValue)
         }
     }
 
-    private suspend fun targeted(i: Int, step: FlowStep, slots: Map<String, String>, value: String): StepResult {
-        // Selector text may hold slot tokens ("{{query}} near me"); resolved against the CURRENT slot values.
-        val sel = step.selector.copy(
-            text = resolveSlots(step.selector.text, slots),
-            contentDesc = resolveSlots(step.selector.contentDesc, slots),
-        )
+    private suspend fun targeted(i: Int, step: FlowStep, next: FlowStep?, slots: Map<String, String>, value: String): StepResult {
+        val sel = resolved(step.selector, slots)
         val isTap = step.type == StepType.TAP
         val slotValue = step.slotRef?.let { slots[it] }
-        val probe = { t: LiveTree ->
-            // Taps never target text inputs (a typed value would otherwise match itself).
-            val nodes = if (isTap) t.nodes.filter { !it.editable } else t.nodes
-            SelectorMatcher.findTarget(nodes, sel, slotValue, isTap)?.let { t to it }
-        }
+        val probe = probeFor(step.type, sel, slotValue)
 
         var fallback = false
         var found = poll(cfg.waitMs, probe)
+        // A sheet or upsell seen during the demo ("Unlock 20% OFF… Continue") need not appear again: if the next step
+        // can already run, this one was an interstitial that was not shown this time.
+        if (found == null && next != null && next.type in TARGETED && probeFor(next.type, resolved(next.selector, slots), next.slotRef?.let { slots[it] })(device.tree()) != null) {
+            return StepResult(i, true, error = "skipped: not shown this time")
+        }
+        if (found == null && sel.near.isNotEmpty()) {
+            // Row-anchored target (the ADD in the Farmhouse row) may be further down the list. Never handed to the LLM:
+            // a wrong guess here adds the wrong dish.
+            repeat(cfg.scrollTries) {
+                if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, probe)
+            }
+            if (found == null) return StepResult(i, false, error = "couldn't find \"${sel.near}\" on the screen")
+        }
         if (found == null) found = poll(cfg.retryMs, probe) // retry once
         if (found == null && picker != null) { // LLM fallback: also how unexpected popups get dismissed/bypassed
             val tree = device.tree()
@@ -101,6 +111,60 @@ class Replayer(
         val acted = if (isTap) device.tap(tree, node) else device.type(tree, node, value)
         return finish(i, step, acted, fallback)
     }
+
+    private fun probeFor(type: StepType, sel: Selector, slotValue: String?): (LiveTree) -> Pair<LiveTree, UiNode>? = { t ->
+        SelectorMatcher.target(t.nodes, sel, slotValue, type == StepType.TAP)?.let { t to it }
+    }
+
+    /** Taps "+" / "−" beside the item until the count reads [want]; each tap is re-read, never assumed. */
+    private suspend fun quantity(i: Int, step: FlowStep, slots: Map<String, String>, want: String): StepResult {
+        val n = want.toIntOrNull()?.takeIf { it in 1..MAX_QTY } ?: return StepResult(i, false, error = "quantity \"$want\" is not a number I can set")
+        val near = resolveSlots(step.selector.near, slots)
+        val item = SLOT_TOKEN.find(step.selector.near)?.groupValues?.get(1)?.let { slots[it] }
+        var last = -1
+        repeat(MAX_QTY + 2) {
+            val t = device.tree()
+            val s = Steppers.find(t.nodes, near, item) ?: poll(cfg.waitMs) { Steppers.find(it.nodes, near, item) }
+                ?: return StepResult(i, false, error = "couldn't find the quantity control for ${item ?: "the item"}")
+            if (s.count == n) return StepResult(i, true)
+            if (s.count == last) return StepResult(i, false, error = "the quantity stayed at ${s.count}")
+            if (s.count > n && s.count == 1) return StepResult(i, false, error = "the quantity can't go below 1")
+            val button = if (s.count < n) s.plus else s.minus
+            ScreenGuard.action(t.nodes, button)?.let { return handover(i, it) }
+            last = s.count
+            device.tap(t, button)
+            poll(cfg.waitMs) { tt -> Steppers.find(tt.nodes, near, item)?.takeIf { it.count != last } }
+        }
+        return StepResult(i, false, error = "couldn't set the quantity to $n")
+    }
+
+    /** Opens the delivery-address picker and chooses the saved address labelled [label]; verified on the header. */
+    private suspend fun address(i: Int, label: String): StepResult {
+        val chosen = Regex("\\bto\\s+${Regex.escape(label)}\\b", RegexOption.IGNORE_CASE)
+        val isChosen = { t: LiveTree -> t.nodes.any { !it.editable && chosen.containsMatchIn(it.text + " " + it.contentDesc) } }
+        if (isChosen(device.tree())) return StepResult(i, true)
+
+        val opener = poll(cfg.waitMs) { t -> t.nodes.firstOrNull { ADDRESS_HEADER.containsMatchIn(it.text + " " + it.contentDesc) }?.let { t to it } }
+            ?: return StepResult(i, false, error = "couldn't find where to change the delivery address")
+        device.tap(opener.first, opener.second)
+
+        val entry = { t: LiveTree -> t.nodes.firstOrNull { !it.editable && (it.text.trim().equals(label, true) || it.contentDesc.trim().equals(label, true)) }?.let { t to it } }
+        var found = poll(cfg.waitMs, entry)
+        repeat(cfg.scrollTries) { if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, entry) }
+        val (tree, node) = found ?: run {
+            device.back() // close the picker again rather than leave the user in it
+            return StepResult(i, false, error = "there's no saved address called \"$label\"")
+        }
+        device.tap(tree, node)
+        return if (waitFor(isChosen)) StepResult(i, true) else StepResult(i, false, error = "the delivery address didn't change to $label")
+    }
+
+    private fun resolved(sel: Selector, slots: Map<String, String>) = sel.copy(
+        // Selector text may hold slot tokens ("{{query}} near me"); resolved against the CURRENT slot values.
+        text = resolveSlots(sel.text, slots),
+        contentDesc = resolveSlots(sel.contentDesc, slots),
+        near = resolveSlots(sel.near, slots),
+    )
 
     private fun handover(i: Int, b: Boundary) = StepResult(i, false, error = "handed over: ${b.reason}", handover = b)
 
@@ -129,4 +193,12 @@ class Replayer(
 
     private suspend fun waitFor(cond: (LiveTree) -> Boolean): Boolean =
         poll(cfg.waitMs) { t -> if (cond(t)) true else null } ?: false
+
+    private companion object {
+        const val MAX_QTY = 20
+        val TARGETED = setOf(StepType.TAP, StepType.TYPE)
+        val SLOT_TOKEN = Regex("\\{\\{(\\w+)}}")
+        // "25-30 mins to Home", "Deliver to Work", "Delivering to …": the control that opens the address picker.
+        val ADDRESS_HEADER = Regex("\\b(deliver(ing|y)?\\s+to|mins?\\s+to)\\s+\\S", RegexOption.IGNORE_CASE)
+    }
 }

@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityWindowInfo
 import com.tva.teachable.BuildConfig
 import com.tva.teachable.core.FlowJson
 import com.tva.teachable.core.Selector
@@ -51,7 +52,17 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     }
 
     // ---- Device (used by Replayer) ----
-    override fun tree() = UiTreeReader.readLive(rootInActiveWindow)
+    /**
+     * Every window of the foreground app, top-most first. Tooltips and coach marks are separate windows: reading only
+     * the active one would show the popup and hide the page under it.
+     */
+    override fun tree(): LiveTree {
+        val active = rootInActiveWindow ?: return UiTreeReader.readLive(null)
+        val pkg = active.packageName
+        val roots = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .mapNotNull { it.root }.filter { it.packageName == pkg }
+        return UiTreeReader.readLive(roots.ifEmpty { listOf(active) })
+    }
     override fun launch(packageName: String): Boolean {
         val i = packageManager.getLaunchIntentForPackage(packageName) ?: return false
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK) // fresh start: replay must begin from the app home
@@ -76,6 +87,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                 val sel = Selector(
                     resourceId = i.getStringExtra("id").orEmpty(), text = i.getStringExtra("text").orEmpty(),
                     contentDesc = i.getStringExtra("desc").orEmpty(), className = i.getStringExtra("cls").orEmpty(),
+                    near = i.getStringExtra("near").orEmpty(),
                 )
                 if (cmd == "replay") { debugReplay(i.getStringExtra("file").orEmpty(), i.getStringExtra("slots").orEmpty()); return }
                 val result = when (cmd) {
@@ -85,8 +97,8 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                     "say" -> (com.tva.teachable.voice.VoiceService.instance?.also { it.sendCommand(i.getStringExtra("text").orEmpty()) } != null).toString()
                     // Dry run: what the guard says about the node a tap WOULD hit. Never taps.
                     "check" -> tree().let { t ->
-                        val n = SelectorMatcher.findTarget(t.nodes.filter { !it.editable }, sel, forTap = true)
-                        n?.let { "${it.resourceId} -> ${com.tva.teachable.core.ScreenGuard.action(t.nodes, it) ?: "allowed"}" } ?: "no target"
+                        val n = SelectorMatcher.target(t.nodes, sel, i.getStringExtra("slot"), forTap = true)
+                        n?.let { "#${it.index} ${it.resourceId} ${it.bounds} -> ${com.tva.teachable.core.ScreenGuard.action(t.nodes, it) ?: "allowed"}" } ?: "no target"
                     }
                     "guard" -> com.tva.teachable.core.ScreenGuard.screen(tree().nodes)?.toString() ?: "no boundary"
                     "scroll" -> scroll(tree()).toString()
@@ -104,8 +116,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     /** Same target rule as the Replayer (taps skip text inputs, prefer clickable nodes) so manual tests match replay. */
     private fun withNode(sel: Selector, forTap: Boolean, block: (LiveTree, UiNode) -> Boolean): Boolean {
         val t = tree()
-        val pool = if (forTap) t.nodes.filter { !it.editable } else t.nodes
-        val n = SelectorMatcher.findTarget(pool, sel, forTap = forTap) ?: return false
+        val n = SelectorMatcher.target(t.nodes, sel, null, forTap) ?: return false
         return block(t, n)
     }
 

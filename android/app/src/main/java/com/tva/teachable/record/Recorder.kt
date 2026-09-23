@@ -7,7 +7,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.tva.teachable.core.Expect
 import com.tva.teachable.a11y.UiTreeReader
 import com.tva.teachable.core.FlowStep
+import com.tva.teachable.core.RowContext
 import com.tva.teachable.core.ScreenGuard
+import com.tva.teachable.core.UiNode
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.StepType
 
@@ -35,8 +37,11 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         // The demo's launch step is the first real app the user touches (launcher taps are ignored by design).
         if (!launched) { steps += FlowStep(StepType.LAUNCH, value = pkg); launched = true }
         when (e.eventType) {
-            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> if (!onBoundary(e)) onText(e) else pendingType = null
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> if (!onBoundary(e)) onClick(e) else pendingType = null
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED, AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                val screen = UiTreeReader.readLive(e.source?.window?.root).nodes
+                if (onBoundary(screen)) { pendingType = null; return }
+                if (e.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) onClick(e, screen) else onText(e)
+            }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> onWindow(pkg)
         }
     }
@@ -49,7 +54,7 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         pendingType = FlowStep(StepType.TYPE, selectorOf(src), value = text)
     }
 
-    private fun onClick(e: AccessibilityEvent) {
+    private fun onClick(e: AccessibilityEvent, screen: List<UiNode>) {
         val src = e.source
         if (src?.isPassword == true) return
         flushType()
@@ -59,7 +64,21 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
             contentDesc = e.contentDescription?.toString().orEmpty(),
             className = e.className?.toString().orEmpty(),
         )
-        if (!sel.isEmpty) steps += FlowStep(StepType.TAP, sel)
+        if (!sel.isEmpty) steps += FlowStep(StepType.TAP, sel, context = src?.let { rowContext(screen, it, sel) }.orEmpty())
+    }
+
+    /**
+     * Captions of the tapped element's row, only when the same control repeats on screen (one ADD per dish): the
+     * backend turns the caption that names a slot value into selector.near, so replay taps the right row's ADD.
+     */
+    private fun rowContext(screen: List<UiNode>, src: AccessibilityNodeInfo, sel: Selector): List<String> {
+        val me = UiTreeReader.toUiNode(src)
+        val node = screen.firstOrNull { it.bounds == me.bounds && it.resourceId == me.resourceId && it.className == me.className } ?: return emptyList()
+        val sameKind = { n: UiNode ->
+            if (sel.resourceId.isNotEmpty()) n.resourceId == sel.resourceId else sel.text.isNotEmpty() && n.text == sel.text
+        }
+        if (screen.count(sameKind) < 2) return emptyList()
+        return RowContext.of(screen, node, sameKind)
     }
 
     /** The screen that appears after an action becomes that action's `expect` (what replay must verify). */
@@ -69,8 +88,8 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         if (last.type == StepType.TAP && last.expect.packageName.isEmpty()) steps[steps.lastIndex] = last.copy(expect = Expect(packageName = pkg))
     }
 
-    private fun onBoundary(e: AccessibilityEvent): Boolean {
-        val b = ScreenGuard.screen(UiTreeReader.readLive(e.source?.window?.root).nodes) ?: return false
+    private fun onBoundary(screen: List<UiNode>): Boolean {
+        val b = ScreenGuard.screen(screen) ?: return false
         Log.i("TVA", "recorder: not recording on a ${b.kind} screen (${b.reason})")
         return true
     }
