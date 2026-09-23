@@ -55,9 +55,12 @@ object SelectorMatcher {
             // className is a last resort ONLY for selectors with no id/text/desc; otherwise it matches arbitrary containers.
             { sel.className.isNotEmpty() && sel.resourceId.isEmpty() && sel.text.isEmpty() && sel.contentDesc.isEmpty() && it.className == sel.className },
         )
-        for (pred in steps) {
+        for ((tier, pred) in steps.withIndex()) {
             val hits = nodes.filter(pred)
-            if (hits.isNotEmpty()) return hits
+            if (hits.isEmpty()) continue
+            // Apps reuse ids ("container") across many elements: the recorded caption picks the right one.
+            if (tier == 0 && hits.size > 1) narrowByCaption(nodes, hits, sel)?.let { return it }
+            return hits
         }
         return emptyList()
     }
@@ -84,10 +87,29 @@ object SelectorMatcher {
      * naming it (or, failing that, [slotValue]) and never falls back to "the first one".
      */
     fun target(nodes: List<UiNode>, sel: Selector, slotValue: String?, forTap: Boolean): UiNode? {
-        val pool = if (forTap) nodes.filter { !it.editable } else nodes
+        // A tap needs something clickable at or above the node: a caption echoed in a plain label (the search box
+        // repeating "Domino's pizza") would otherwise be "tapped" to no effect.
+        val pool = if (forTap) tappable(nodes) else nodes
         if (sel.near.isEmpty()) return findTarget(pool, sel, slotValue, forTap)
         val same = findAll(pool, sel.copy(near = "")).toSet()
         return RowContext.pick(nodes, same.toList(), sel.near, slotValue) { it in same }
+    }
+
+    private fun tappable(nodes: List<UiNode>): List<UiNode> {
+        val parent = RowContext.parents(nodes)
+        val reachable = BooleanArray(nodes.size)
+        for (n in nodes) reachable[n.index] = n.clickable || (parent[n.index] >= 0 && reachable[parent[n.index]])
+        return nodes.filter { !it.editable && reachable[it.index] }
+    }
+
+    private fun narrowByCaption(nodes: List<UiNode>, hits: List<UiNode>, sel: Selector): List<UiNode>? {
+        val caption = listOf(sel.text, sel.contentDesc).filter { it.isNotEmpty() }
+        if (caption.isEmpty()) return null
+        return hits.filter { h ->
+            val at = nodes.indexOf(h)
+            val inside = listOf(h) + nodes.drop(at + 1).takeWhile { it.depth > h.depth }
+            caption.all { c -> inside.any { !it.password && (it.text.equals(c, true) || it.contentDesc.equals(c, true)) } }
+        }.takeIf { it.isNotEmpty() }
     }
 
     private fun textMatches(actual: String, wanted: String, contains: Boolean) =

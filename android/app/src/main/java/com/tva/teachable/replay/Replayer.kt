@@ -5,6 +5,7 @@ import com.tva.teachable.core.Boundary
 import com.tva.teachable.core.BoundaryKind
 import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
+import com.tva.teachable.core.RowContext
 import com.tva.teachable.core.ScreenGuard
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.SelectorMatcher
@@ -28,7 +29,7 @@ interface Device {
 fun interface ConfirmationGate { suspend fun confirm(step: FlowStep, slots: Map<String, String>): Boolean }
 val DenyAll = ConfirmationGate { _, _ -> false }
 
-data class ReplayConfig(val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300, val scrollTries: Int = 3)
+data class ReplayConfig(val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300, val scrollTries: Int = 3, val settleMs: Long = 3000)
 data class StepResult(
     val index: Int, val ok: Boolean, val usedLlmFallback: Boolean = false, val error: String? = null,
     val declined: Boolean = false, val handover: Boundary? = null,
@@ -54,7 +55,8 @@ class Replayer(
             r.handover?.let { return RunResult(it.kind == BoundaryKind.PAYMENT, results, handover = it) }
             if (!r.ok) return RunResult(false, results, r.declined)
         }
-        return RunResult(true, results, handover = ScreenGuard.screen(device.tree().nodes))
+        val end = device.tree().nodes
+        return RunResult(true, results, handover = ScreenGuard.screen(end) ?: ScreenGuard.readyToPay(end))
     }
 
     private suspend fun runStep(i: Int, step: FlowStep, next: FlowStep?, slots: Map<String, String>): StepResult {
@@ -89,7 +91,7 @@ class Replayer(
         var found = poll(cfg.waitMs, probe)
         // A sheet or upsell seen during the demo ("Unlock 20% OFF… Continue") need not appear again: if the next step
         // can already run, this one was an interstitial that was not shown this time.
-        if (found == null && next != null && next.type in TARGETED && probeFor(next.type, resolved(next.selector, slots), next.slotRef?.let { slots[it] })(device.tree()) != null) {
+        if (found == null && next != null && isDistinctive(next) && probeFor(next.type, resolved(next.selector, slots), next.slotRef?.let { slots[it] })(device.tree()) != null) {
             return StepResult(i, true, error = "skipped: not shown this time")
         }
         if (found == null && sel.near.isNotEmpty()) {
@@ -108,9 +110,42 @@ class Replayer(
         }
         val (tree, node) = found ?: return StepResult(i, false, error = "target not found")
         if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
-        val acted = if (isTap) device.tap(tree, node) else device.type(tree, node, value)
+        val before = signature(tree)
+        val acted = if (isTap) device.tap(tree, node) else typeAndVerify(tree, node, sel, value)
+        // Let the screen react before the next step looks for its target, or it may act on the old screen.
+        if (acted && isTap) poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
         return finish(i, step, acted, fallback)
     }
+
+    /**
+     * Text set while a screen is still opening can be wiped when the field initialises, so the screen is read back
+     * and the text set again if it did not stick.
+     */
+    private suspend fun typeAndVerify(tree: LiveTree, node: UiNode, sel: Selector, value: String): Boolean {
+        if (node.password) return device.type(tree, node, value) // never read back
+        // Read back from the whole screen: some fields keep reporting their hint and show the text elsewhere, often
+        // completed ("Domino's" -> "Domino's pizza"). Success = more of the screen mentions the value than before.
+        val want = RowContext.norm(value)
+        val mentions = { tt: LiveTree -> tt.nodes.count { !it.password && want in RowContext.norm(it.text) } }
+        val before = mentions(tree)
+        var t = tree
+        var n = node
+        repeat(TYPE_TRIES) {
+            if (!device.type(t, n, value)) return false
+            val stuck = poll(cfg.retryMs) { tt -> tt.takeIf { mentions(it) > before } }
+            if (stuck != null) return true
+            android.util.Log.w("TVA", "replay: typed text did not show on screen, retrying")
+            t = device.tree()
+            n = SelectorMatcher.target(t.nodes, sel, null, forTap = false) ?: return false
+        }
+        return false
+    }
+
+    /** Only a tap with its own caption or row anchor proves the screen moved on; a bare text-field id exists everywhere. */
+    private fun isDistinctive(step: FlowStep) = step.type == StepType.TAP &&
+        (step.selector.text.isNotBlank() || step.selector.contentDesc.isNotBlank() || step.selector.near.isNotBlank())
+
+    private fun signature(t: LiveTree) = t.nodes.take(200).joinToString("|") { "${it.resourceId}:${it.text}:${it.contentDesc}" }.hashCode()
 
     private fun probeFor(type: StepType, sel: Selector, slotValue: String?): (LiveTree) -> Pair<LiveTree, UiNode>? = { t ->
         SelectorMatcher.target(t.nodes, sel, slotValue, type == StepType.TAP)?.let { t to it }
@@ -196,8 +231,8 @@ class Replayer(
 
     private companion object {
         const val MAX_QTY = 20
-        val TARGETED = setOf(StepType.TAP, StepType.TYPE)
-        val SLOT_TOKEN = Regex("\\{\\{(\\w+)}}")
+        const val TYPE_TRIES = 3
+        val SLOT_TOKEN = Regex("\\{\\{(\\w+)\\}\\}")
         // "25-30 mins to Home", "Deliver to Work", "Delivering to …": the control that opens the address picker.
         val ADDRESS_HEADER = Regex("\\b(deliver(ing|y)?\\s+to|mins?\\s+to)\\s+\\S", RegexOption.IGNORE_CASE)
     }

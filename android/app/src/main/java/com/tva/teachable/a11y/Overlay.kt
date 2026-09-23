@@ -115,6 +115,9 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
 
     fun hide() { handler.removeCallbacks(startHold); runCatching { wm.removeView(root) } }
 
+    /** Re-adds the panel so it sits above an overlay added later (the teach-mode TouchCatcher). */
+    fun raise() = handler.post { if (::root.isInitialized && root.isAttachedToWindow) { wm.removeView(root); wm.addView(root, lp) } }
+
     // ---- mic button: hold vs double-tap vs drag ----
 
     /**

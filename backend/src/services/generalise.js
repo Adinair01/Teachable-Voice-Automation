@@ -80,7 +80,9 @@ export function generalise({ command, intentKey, slots, steps }) {
 /** Quantity + address adjustments go just before the first sensitive step (checkout), else at the end (the cart). */
 function addOrderingSteps(steps, slots) {
   for (const s of IMPLIED_SLOTS) if (!slots.some((x) => x.name === s.name)) slots.push({ ...s });
-  const itemNear = [...steps].reverse().find((s) => s.type === 'tap' && s.selector.near)?.selector.near ?? '';
+  // The quantity stepper sits in the dish's row, so prefer the anchor naming the item over e.g. the restaurant card.
+  const anchored = [...steps].reverse().filter((s) => s.type === 'tap' && s.selector.near);
+  const itemNear = (anchored.find((s) => s.selector.near.includes('{{item}}')) ?? anchored[0])?.selector.near ?? '';
   const blank = { resourceId: '', text: '', contentDesc: '', className: '' };
   const extra = [
     { type: 'set_quantity', selector: { ...blank, near: itemNear }, slotRef: 'quantity', value: '', sensitive: false, expect: {} },

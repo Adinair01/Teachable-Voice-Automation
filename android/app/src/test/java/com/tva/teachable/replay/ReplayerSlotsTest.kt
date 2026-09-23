@@ -42,7 +42,7 @@ class ReplayerSlotsTest {
         override fun back() = true.also { pickerOpen = false }
     }
 
-    private val fast = ReplayConfig(waitMs = 30, retryMs = 30, pollMs = 10)
+    private val fast = ReplayConfig(waitMs = 30, retryMs = 30, pollMs = 10, settleMs = 30)
     private fun flow(vararg s: FlowStep) = Flow("order_food", "order food", "com.application.zomato", s.toList())
     private val qtyStep = FlowStep(StepType.SET_QUANTITY, Selector(near = "{{item}} Pizza"), slotRef = "quantity")
     private val addrStep = FlowStep(StepType.CHOOSE_ADDRESS, slotRef = "address")

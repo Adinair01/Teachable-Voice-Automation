@@ -5,11 +5,13 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Rect
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.tva.teachable.BuildConfig
 import com.tva.teachable.core.FlowJson
+import com.tva.teachable.core.FlowStep
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.SelectorMatcher
 import com.tva.teachable.net.BackendConfig
@@ -21,6 +23,7 @@ import com.tva.teachable.core.UiNode
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -31,6 +34,9 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     private lateinit var executor: ActionExecutor
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     @Volatile private var recorder: Recorder? = null
+    private var catcher: TouchCatcher? = null
+    // One lane so taps are recorded in the order they were made.
+    @OptIn(ExperimentalCoroutinesApi::class) private val recordLane = Dispatchers.Default.limitedParallelism(1)
     private var overlay: Overlay? = null
 
     override fun onServiceConnected() {
@@ -75,9 +81,29 @@ class TvaAccessibilityService : AccessibilityService(), Device {
 
     fun startRecording() {
         val home = packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
-        recorder = Recorder(packageName, setOfNotNull("com.android.systemui", home)).also { it.start() }
+        recorder = Recorder(packageName, setOfNotNull("com.android.systemui", home)).also { it.start(); it.touchMode = true }
+        catcher = TouchCatcher(this, ::onTeachTap) { scope.launch(recordLane) { recorder?.onSwipeUp() } }.also { it.show() }
+        overlay?.raise() // the mic / Done panel stays above the catcher, so it keeps working normally
     }
-    fun stopRecording() = recorder?.stop().also { recorder = null }.orEmpty()
+    fun stopRecording(): List<FlowStep> {
+        catcher?.hide(); catcher = null
+        return recorder?.stop().also { recorder = null }.orEmpty()
+    }
+
+    /** Reads the screen BEFORE the tap is delivered, records the element under the finger, then lets the tap through. */
+    private fun onTeachTap(x: Int, y: Int, deliver: () -> Unit) {
+        scope.launch(recordLane) {
+            try { if (!overKeyboardOrSystemUi(x, y)) recorder?.onUserTap(tree().nodes, x, y) }
+            catch (e: Exception) { Log.e(TAG, "teach: could not record tap", e) }
+            finally { deliver() }
+        }
+    }
+
+    // Keyboard keys are typing (captured as text), status bar / notification shade are not part of the task.
+    private fun overKeyboardOrSystemUi(x: Int, y: Int) = windows.any { w ->
+        (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD || w.type == AccessibilityWindowInfo.TYPE_SYSTEM) &&
+            Rect().also { w.getBoundsInScreen(it) }.contains(x, y)
+    }
 
     /** Debug-only adb channel: `adb shell am broadcast -a com.tva.DEBUG --es cmd <dump|guard|check|tap|type|scroll|back|replay|rec_start|rec_stop>`. */
     private fun registerDebugReceiver() {

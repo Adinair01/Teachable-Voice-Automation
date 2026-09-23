@@ -1,5 +1,7 @@
 package com.tva.teachable.voice
 
+import android.util.Log
+import com.tva.teachable.BuildConfig
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -166,6 +168,7 @@ class VoiceService : Service() {
         val flowJson = m.getJSONObject("flow"); val flow = FlowJson.parse(flowJson.toString())
         val slots = m.optJSONObject("slots")?.let { o -> o.keys().asSequence().associateWith { o.getString(it) } }.orEmpty()
         AppState.status.value = "Running: ${flow.description}"
+        if (BuildConfig.DEBUG) Log.d("TVA", "replay slots=$slots")
         val gate = ConfirmationGate { step, _ -> askConfirmation("${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc }}".trim()) }
         val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate).run(flow, slots)
         val outcome = when {

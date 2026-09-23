@@ -25,7 +25,7 @@ class ReplayerGuardTest {
         override fun back() = true
     }
 
-    private val fast = ReplayConfig(waitMs = 30, retryMs = 30, pollMs = 10)
+    private val fast = ReplayConfig(waitMs = 30, retryMs = 30, pollMs = 10, settleMs = 30)
     private val askedAnyway = ConfirmationGate { _, _ -> error("payment must hand over, not ask") }
     private fun tap(text: String) = FlowStep(StepType.TAP, Selector(text = text))
     private fun flow(vararg steps: FlowStep) = Flow("order_food", "order food", "com.application.zomato", steps.toList())
@@ -43,6 +43,13 @@ class ReplayerGuardTest {
         assertTrue(r.success)
         assertEquals(BoundaryKind.PAYMENT, r.handover?.kind)
         assertEquals(listOf("Margherita"), d.tapped)
+    }
+
+    @Test fun flowEndingOnTheCartHandsOverForPayment() = runBlocking {
+        val d = FakeDevice(listOf("Margherita", "₹163", "Place Order"))
+        val r = Replayer(d, gate = askedAnyway, cfg = fast).run(flow(tap("Margherita")), emptyMap())
+        assertTrue(r.success)
+        assertEquals(BoundaryKind.PAYMENT, r.handover?.kind)
     }
 
     @Test fun llmFallbackCannotPickAPayButton() = runBlocking {

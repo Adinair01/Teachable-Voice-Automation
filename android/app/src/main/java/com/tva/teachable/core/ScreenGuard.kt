@@ -65,6 +65,11 @@ object ScreenGuard {
     fun actionText(text: String): Boundary? =
         if (COMMIT.containsMatchIn(text)) Boundary(BoundaryKind.PAYMENT, "would tap \"${text.trim().take(40)}\"") else null
 
+    /** A pay / place-order control is on screen: where an ordering flow ends and the user takes over. */
+    fun readyToPay(nodes: List<UiNode>): Boundary? =
+        nodes.firstOrNull { !it.editable && actionText(visible(it)) != null }
+            ?.let { Boundary(BoundaryKind.PAYMENT, "ready to pay: \"${visible(it).take(40)}\"") }
+
     // Nodes are a pre-order walk, so a node's subtree is the run of following nodes that sit deeper than it.
     private fun subtree(nodes: List<UiNode>, node: UiNode) =
         nodes.drop(node.index + 1).takeWhile { it.depth > node.depth }.take(30)
