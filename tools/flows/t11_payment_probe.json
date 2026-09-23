@@ -1,0 +1,2 @@
+{"intentKey":"t11_probe","description":"unflagged tap on payment page","appPackage":"com.application.zomato",
+ "steps":[{"type":"tap","selector":{"text":"CARDS"},"slotRef":null,"value":"","sensitive":false,"expect":{}}]}

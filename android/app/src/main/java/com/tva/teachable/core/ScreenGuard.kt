@@ -46,7 +46,7 @@ object ScreenGuard {
 
         val texts = nodes.map(::visible).filter { it.isNotBlank() }
         texts.firstOrNull { PAYMENT_TITLE.containsMatchIn(it) }?.let { return Boundary(BoundaryKind.PAYMENT, "payment screen: \"${it.take(40)}\"") }
-        val methods = texts.flatMap { t -> PAYMENT_METHOD.findAll(t).map { m -> m.value.lowercase().replace(" ", "") }.toList() }.toSet()
+        val methods = texts.flatMap { t -> PAYMENT_METHOD.findAll(t).map { m -> m.value.lowercase().replace(" ", "").removeSuffix("s") }.toList() }.toSet()
         if (methods.size >= 3) return Boundary(BoundaryKind.PAYMENT, "payment methods listed: ${methods.joinToString()}")
 
         if (texts.any { LOGIN_TITLE.containsMatchIn(it) } && inputs.any { LOGIN_FIELD.containsMatchIn(label(it)) })

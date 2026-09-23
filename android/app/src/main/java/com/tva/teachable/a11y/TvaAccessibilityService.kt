@@ -68,7 +68,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     }
     fun stopRecording() = recorder?.stop().also { recorder = null }.orEmpty()
 
-    /** Debug-only adb channel: `adb shell am broadcast -a com.tva.DEBUG --es cmd <dump|tap|type|scroll|back|replay|rec_start|rec_stop>`. */
+    /** Debug-only adb channel: `adb shell am broadcast -a com.tva.DEBUG --es cmd <dump|guard|check|tap|type|scroll|back|replay|rec_start|rec_stop>`. */
     private fun registerDebugReceiver() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) {
@@ -83,6 +83,12 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                     "tap" -> withNode(sel, forTap = true) { t, n -> tap(t, n) }.toString()
                     "type" -> withNode(sel, forTap = false) { t, n -> type(t, n, i.getStringExtra("value").orEmpty()) }.toString()
                     "say" -> (com.tva.teachable.voice.VoiceService.instance?.also { it.sendCommand(i.getStringExtra("text").orEmpty()) } != null).toString()
+                    // Dry run: what the guard says about the node a tap WOULD hit. Never taps.
+                    "check" -> tree().let { t ->
+                        val n = SelectorMatcher.findTarget(t.nodes.filter { !it.editable }, sel, forTap = true)
+                        n?.let { "${it.resourceId} -> ${com.tva.teachable.core.ScreenGuard.action(t.nodes, it) ?: "allowed"}" } ?: "no target"
+                    }
+                    "guard" -> com.tva.teachable.core.ScreenGuard.screen(tree().nodes)?.toString() ?: "no boundary"
                     "scroll" -> scroll(tree()).toString()
                     "back" -> back().toString()
                     "rec_start" -> { startRecording(); "recording" }

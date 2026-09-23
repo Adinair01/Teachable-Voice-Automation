@@ -1,0 +1,2 @@
+{"intentKey":"t11_commit_probe","description":"unflagged tap on a payment control in the cart","appPackage":"com.application.zomato",
+ "steps":[{"type":"tap","selector":{"resourceId":"com.application.zomato:id/tv_payment_title"},"slotRef":null,"value":"","sensitive":false,"expect":{}}]}

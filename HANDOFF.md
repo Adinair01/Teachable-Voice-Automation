@@ -245,8 +245,29 @@ The old screenshot demo video is superseded: new video = one unedited scrcpy rec
   foreground window and dismiss it. (3) Tapping the "Domino's Pizza" search suggestion lands on a results list, a
   second tap on the card opens the restaurant. (4) Home dump shows the saved address text — keep dumps out of logs/video.
 - Debug `tap` now uses the Replayer's target rule (skip inputs, prefer clickable) — it used to hit the search box.
-- NOT yet seen (needs adding to cart — ask Aditya first, standing rule): customisation sheet, qty stepper, cart,
-  address sheet, payment page.
+- Cart walk-through done with Aditya's OK (Margherita added, cart/address/payment page inspected, cart emptied after;
+  nothing ordered):
+  * CRITICAL FIX: Zomato hides its action buttons ("Add item ₹114", checkout) from non-tool accessibility services
+    (Android 14+ accessibilityDataSensitive). `android:isAccessibilityTool="true"` in accessibility_config.xml makes
+    them visible. Without it the recorder could not capture them AND the guard could not see pay buttons. README
+    limitation: Play policy restricts that flag to genuine a11y tools; an OEM system service qualifies.
+  * Item sheet ("customisable"): Crust/Size radio groups with defaults preselected, stepper (button_remove /
+    text_view_title=qty / button_add), confirm button id/button "Add item ₹<price>". Then an upsell sheet
+    ("Unlock 20% OFF… Continue") may appear — an interstitial the replay must pass.
+  * Cart (MenuResCartActivity): toolbarButton "25-30 mins to Home | <address>" = address switcher; row stepper with
+    qty in text_view_title (read back 1 -> 2, total updated); tv_payment_title "PAY USING"; tv_action_text "Place
+    Order" inside cv_checkout_container. Also "Renew Gold … ADD ₹1" upsell — replay must NEVER tap an ADD outside the
+    target item's row. Tree mixes cart + menu nodes underneath.
+  * Address sheet: "Select an address", saved entries = label (Home/Hotel/…) + address + phone, grouped under
+    DELIVERS TO / DOES NOT DELIVER TO. Contains PII — keep out of logs/video. NO "Work" address exists on the account
+    (asked Aditya); one deliverable Home only.
+  * Payment page = PaymentsOptionsActivityV5: RECOMMENDED/CARDS/WALLETS/PAY LATER sections. ScreenGuard -> PAYMENT.
+- T11 DEVICE-VERIFIED: tools/flows/t11_payment_probe.json (unflagged tap on the payment page) -> handed over, nothing
+  tapped; t11_commit_probe.json (unflagged tap on "PAY USING" by id only) -> handed over by the live-node check.
+  Dry-run `tools/a11y.sh check --es text|id …` (never taps): "Place Order" label, cv_checkout_container and
+  genericCartButton all -> PAYMENT. Item ADD / stepper + -> allowed. Cart itself -> no boundary. Login/OTP not
+  device-tested (would need logging out) — unit-tested only.
+- New debug cmds: `guard` (ScreenGuard on live screen), `check` (guard verdict for a tap target, dry run).
 
 ## Next steps (in order — 2026-09-23 scope)
 1. PHONE (needs Aditya): connect USB + `adb reverse tcp:3100 tcp:3100`; install Zomato, log in, saved Home + Work.
