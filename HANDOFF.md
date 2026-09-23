@@ -146,19 +146,86 @@ CURRENT screen. A test alarm (23:00 "test") that I created was deleted again; th
 - Video now has an 'open any app' scene (Calculator + Clock; Gmail/Settings frames were dropped because they showed personal data) and the deck has a matching slide (11 slides).
 - Commits/PRs: author Aditya Nair <adityanair5002@gmail.com>, NO Claude trailers. History was rewritten once (keys purged, identity fixed); backup bundle in the session scratchpad only.
 
-## Next steps (in order)
-1. **Team name** (CollegeName_TeamName) — blocks every submission filename. ASK before generating any.
-2. Fresh-verify Docker from a clean state (`docker compose down -v && docker compose up -d --build`) and re-check
-   `/health` + `/dashboard` against the README's exact commands.
-3. Clean metrics run for the numbers that go in the PPT: reset runlogs, teach the three flows, replay the eval set,
-   screenshot `/dashboard`.
-4. Demo video (<=5 min): teach trigger + manual demo + second command with a different slot + confirmation before a
-   sensitive step. Media volume up; overlay states are visible on screen.
-5. Presentation (problem, solution, architecture, why Accessibility beats per-app integrations, metrics, limitations,
-   "production = OEM system service").
-6. Secrets scan, commit everything, then WAIT for Aditya's go-ahead before creating/pushing the
-   `PRISM_GENAI_HACKATHON_Y2026` tag.
+## Team name (received) + deliverables built (2026-09-21 late – 2026-09-22)
+- Team name: **SRM University, Kattankulathur, Chennai_Ciphera's** → filenames use
+  `SRM_University_Kattankulathur_Chennai_Ciphera_s` (spaces/commas/apostrophe stripped for filesystem/zip safety).
+- Docker fresh-verify done (`down -v` + `up -d --build`) against the README's own commands: `/health` ok, `/dashboard`
+  up, 15→18 unit tests pass as features were added, container user non-root.
+- Clean metrics run done (flows+runlogs reset, 3 flows taught on the real phone, 9 paraphrased replays):
+  **learn 3/3, replay 9/9, paraphrase 9/9 (all 100%)**; offline eval 13/13 match + slots. Screenshotted from `/dashboard`.
+- `submission/` holds `SRM_University_Kattankulathur_Chennai_Ciphera_s_Demo_Video.mp4` and `..._Presentation.pptx`.
+- Presentation: **11 slides**, rendered and eyeballed with LibreOffice (`brew install --cask libreoffice`, headless
+  `--convert-to pdf`) + PyMuPDF — one real overflow found and fixed (Architecture slide backend-card heading wrapped
+  into its body text; shortened it). Not yet checked again after the still-pending re-record of slides 7/8 photos
+  (see below) — reopen and eyeball after that.
+- Repo-wide secrets scan done: working tree clean, `backend/.env` gitignored, `.env.example` has empty values.
+- **History was rewritten** (`git filter-branch`, backup bundle was scratchpad-only, now gone with the session) to:
+  (a) purge the real Deepgram/Groq keys that commit `49d20eb`'s `.env.example` had originally, (b) set every commit's
+  author+committer to `Aditya Nair <adityanair5002@gmail.com>`, (c) strip all `Co-Authored-By: Claude…`/"Generated with
+  Claude Code" trailers from commit messages. Verified after rewrite: 0 key hits across all history, 0 Claude/Anthropic
+  mentions in commit messages (one incidental "CLAUDE.md" filename reference remains in a commit subject — the spec
+  file is still named `CLAUDE.md` in the repo; flagged, not changed, awaiting word from Aditya).
+- **Standing rule from Aditya (2026-09-21/22): no commit or PR from here on may carry any Claude/Anthropic attribution.
+  Every commit's author+committer must be `Aditya Nair <adityanair5002@gmail.com>`.** Saved to Claude's persistent
+  memory (`commit-attribution` + `secrets-in-history` memory files) so it survives a session restart.
+- **Both API keys ROTATED by Aditya on 2026-09-22** (new Deepgram + Groq keys placed in `backend/.env`). Verified
+  after rotation: backend restarted, `/health` ok, Deepgram TTS synthesis succeeded (`deepgram tts ok <bytes>`), Groq
+  paraphrase eval passed 13/13 (one run hit `groq http 429` — free-tier burst throttling, not an auth failure; retried
+  and passed clean).
+- Built-in **"open <app>"** feature (see below) shipped, tested on device, video+deck updated to include it.
+
+## Bug report from Aditya (2026-09-21/22): "open Gmail" always fails, teaching it also fails
+Root cause found and explained to Aditya: opening an app was never a built-in command, and demonstrating it can't work
+either — the Recorder ignores taps on the home screen/launcher by design (`launched` flag only fires on the first
+non-launcher package), and `#learn` in `backend/src/ws/session.js` rejects a flow with zero non-launch steps. So "open
+Gmail" always fell into teach mode, and the demo (just opening the app) always produced 0 actionable steps.
+**Fix shipped:**
+- New `backend/src/services/openApp.js`: `parseOpenApp(text)` regex-parses "open/launch/start (the) X (app)"; `resolveApp(name, apps)` matches EXACT normalised label only (deliberately not fuzzy — "open Bluetooth settings" must not resolve to the Settings app and shadow the taught flow; ambiguous/duplicate labels resolve to null too). Unit-tested (`test/openApp.test.js`).
+- `Session` in `backend/src/ws/session.js`: new `apps` message type (`{type:"apps", apps:[{label,package}]}`) stores the phone's installed-app list on the session; `handleCommand` tries `resolveApp` BEFORE the flow matcher and sends back `{type:"launch_app", package, label}` + speaks "Opening X." on a hit. An unmatched name falls through to the normal matcher → teach mode, unchanged.
+- Android: new `InstalledApps.kt` (`queryIntentActivities` for `ACTION_MAIN`/`CATEGORY_LAUNCHER`, deduped by package) sent as the `apps` message right after every successful WS connect (`VoiceService.onConnection`); new `"launch_app"` case in `onServer` calls `TvaAccessibilityService.launch(pkg)` (existing method, already used by the Replayer's `LAUNCH` step).
+- Teach-failure message when a demo only opened an app is now distinct: "I only saw an app being opened. To open an app, just say open and its name. Teach me a task inside the app instead." (was the generic "I didn't see any actions.").
+- **Verified on device** with typed commands (same code path as speech, STT is upstream of `handleCommand`): "open Gmail" → Gmail opened, "open the Chrome app" → Chrome opened, "launch Camera" → Camera opened, "open Zomato" (not installed) → teach mode as expected, "open Bluetooth settings" → the TAUGHT FLOW still won (Settings app did not shadow it), replay succeeded. Mic/STT path itself not re-tested after this change until the live-recording session (see below) — do that first if anything seems off.
+
+## Demo video — status: NEEDS A LIVE RE-RECORD (Aditya's explicit priority #2, in progress)
+- First cut (`ead8aeb`): `adb shell screenrecord` returns "Permission denied" on every writable path tried
+  (`/sdcard/*`, `/sdcard/Movies/*`, `/data/local/tmp/*`) on this Realme (Android 15) — NOT the Android 14+
+  Accessibility-recording restriction, just this device/shell refusing to write. Built instead from ~1.8 fps
+  `adb exec-out screencap` screenshots + macOS `say` narration + PIL captions, spliced with ffmpeg. Silent (no real
+  phone TTS audio). Covered: teach "calculate 5 plus 3" → demo → replay "what is 9 plus 4"=13 → sensitive-step
+  "clear the calculator" declined then confirmed.
+- Added an "open any app" scene (`8628887`) the same screenshot way: had to re-record once because the first take
+  showed Aditya's real Gmail inbox (sender names/subjects) and the Settings account screen (name+photo) on camera —
+  deleted those frames, redid with Calculator+Clock only, nothing personal in the final cut. Final cut 155s (2m35s),
+  under the 5 min cap.
+- **Aditya wants this replaced with a REAL screen recording + his real voice**, not screenshots/synthetic narration.
+- Investigated and solved the capture problem: `brew install scrcpy` (v4.1) — mirrors+records over the existing adb
+  connection, doesn't need on-device storage write. Verified working: `scrcpy --no-window --no-control --record=...
+  --audio-source=playback` captured real video (572×1280) AND the phone's audio output (so the assistant's spoken TTS
+  replies will be audible, not just the video). Mac's built-in mic also tested and picks up voice fine
+  (`ffmpeg -f avfoundation`) for Aditya's spoken commands.
+- **PENDING — needs Aditya live at the phone**, not yet done: unlock phone, screen stays on, raise media volume (0 by
+  default — was the cause of an earlier "silent" scare, see the 2026-09-21 02:00 entry), start scrcpy recording, do a
+  real teach ("calculate 5 plus 3" or similar) + real replay with a new slot + the sensitive-step confirm/decline by
+  voice, then re-add a short "open any app" beat and title/closing cards. Avoid Gmail/any screen with personal data
+  again. After this is done: re-render and re-eyeball the deck (photos on slide 7 come from the OLD screenshot video's
+  frames and should be swapped for real frames from the new recording).
+
+## Next steps (in order — Aditya's explicit priority list, 2026-09-22)
+1. ~~Rotate both API keys~~ DONE (2026-09-22, verified working).
+2. **Live-recorded demo video with Aditya's real voice** (scrcpy, not screenshots) — IN PROGRESS, waiting on Aditya at
+   the phone. See section above for the exact plan.
+3. ~~Fix deck text overflow~~ DONE (2026-09-22) — but re-check after step 2 swaps in real device photos.
+4. Create the public GitHub repo and push `main` — **WAIT for Aditya's explicit go-ahead**, do not do this
+   proactively. He said he'll tell us when.
+5. Only after Aditya confirms the repo is final: create + push the `PRISM_GENAI_HACKATHON_Y2026` tag — **WAIT, do not
+   run until explicitly told**.
 
 ## Open items
-- Team name (CollegeName_TeamName) — needed before submission filenames.
-- Phone must be re-plugged (see above).
+- Live demo-video recording session with Aditya (blocks final video + possibly deck slide 7 photos).
+- GitHub repo URL — Aditya has not created it / not shared it yet; no remote configured in this repo.
+- `CLAUDE.md` filename still contains "CLAUDE" — flagged to Aditya, no decision yet on renaming.
+- Phone quirks to remember for the live session: screen locks after a bit (must stay unlocked/awake for recording);
+  media volume defaults to 0; a stray Airplane-mode toggle happened once mid-session (cause unknown, just check the
+  status bar); typed "yes"/"no" are NEW commands not confirmation answers — the sensitive-step gate must be answered
+  with the overlay Yes/No buttons or spoken "yes"/"no" while `awaitingConfirmSpeech` is true (i.e. right after the
+  "Confirm?" prompt, not via the debug `say` broadcast channel).
