@@ -80,7 +80,8 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                 if (cmd == "replay") { debugReplay(i.getStringExtra("file").orEmpty(), i.getStringExtra("slots").orEmpty()); return }
                 val result = when (cmd) {
                     "dump" -> dump()
-                    "tap", "type" -> withNode(sel) { t, n -> if (cmd == "tap") tap(t, n) else type(t, n, i.getStringExtra("value").orEmpty()) }.toString()
+                    "tap" -> withNode(sel, forTap = true) { t, n -> tap(t, n) }.toString()
+                    "type" -> withNode(sel, forTap = false) { t, n -> type(t, n, i.getStringExtra("value").orEmpty()) }.toString()
                     "say" -> (com.tva.teachable.voice.VoiceService.instance?.also { it.sendCommand(i.getStringExtra("text").orEmpty()) } != null).toString()
                     "scroll" -> scroll(tree()).toString()
                     "back" -> back().toString()
@@ -94,9 +95,11 @@ class TvaAccessibilityService : AccessibilityService(), Device {
         registerReceiver(receiver, IntentFilter("com.tva.DEBUG"), RECEIVER_EXPORTED)
     }
 
-    private fun withNode(sel: Selector, block: (LiveTree, UiNode) -> Boolean): Boolean {
+    /** Same target rule as the Replayer (taps skip text inputs, prefer clickable nodes) so manual tests match replay. */
+    private fun withNode(sel: Selector, forTap: Boolean, block: (LiveTree, UiNode) -> Boolean): Boolean {
         val t = tree()
-        val n = SelectorMatcher.find(t.nodes, sel) ?: return false
+        val pool = if (forTap) t.nodes.filter { !it.editable } else t.nodes
+        val n = SelectorMatcher.findTarget(pool, sel, forTap = forTap) ?: return false
         return block(t, n)
     }
 

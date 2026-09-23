@@ -232,6 +232,22 @@ The old screenshot demo video is superseded: new video = one unedited scrcpy rec
   only tapping the commit button is. Thresholds need tuning against Zomato's real tree.
 - Tests: Kotlin 26 pass (ScreenGuardTest 11, ReplayerGuardTest 4 new), backend 18 pass, debug APK builds.
 
+### Zomato readability check (2026-09-23 ~12:35 IST) — GO so far (read-only screens)
+- Zomato (com.application.zomato) installed, logged in, Home+Work saved. Domino's Pizza IS a Zomato storefront here
+  (4.6★, 45–50 min). Margherita Pizza ₹114 and Farmhouse Pizza ₹279 both found via in-restaurant search.
+- Trees readable: home 327 nodes, search 204, restaurant menu 250-320. Mixed View + Jetpack Compose. Labels are mostly
+  in contentDesc (dish_name, dish_final_price, restaurant title) — matching must use desc as much as text.
+- Stable ids: search_edit_text / edittext (search fields), dish_name, text_view_title="ADD" + button_add per dish,
+  dish_customisation="customisable", fabButton "Menu", in-restaurant search "Search in Domino's Pizza".
+- PROBLEMS SEEN: (1) every dish's ADD has the SAME id/text -> recorder's "tap ADD" would hit the first ADD on replay;
+  T4 needs a row-anchored tap ("ADD in the row whose dish_name = {{item}}"). (2) Coach-mark tooltips and the theme
+  picker open as SEPARATE windows: rootInActiveWindow then returns only the popup (5 nodes) — T7 must detect a tiny
+  foreground window and dismiss it. (3) Tapping the "Domino's Pizza" search suggestion lands on a results list, a
+  second tap on the card opens the restaurant. (4) Home dump shows the saved address text — keep dumps out of logs/video.
+- Debug `tap` now uses the Replayer's target rule (skip inputs, prefer clickable) — it used to hit the search box.
+- NOT yet seen (needs adding to cart — ask Aditya first, standing rule): customisation sheet, qty stepper, cart,
+  address sheet, payment page.
+
 ## Next steps (in order — 2026-09-23 scope)
 1. PHONE (needs Aditya): connect USB + `adb reverse tcp:3100 tcp:3100`; install Zomato, log in, saved Home + Work.
 2. Dump Zomato's tree (`tools/a11y.sh show`) on home, search, restaurant menu, item customisation sheet, cart, address
