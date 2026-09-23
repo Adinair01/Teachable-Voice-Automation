@@ -25,6 +25,7 @@ class RowContextTest {
     @Test fun exactRowCaptionWins() = assertEquals(4, pick("Margherita Pizza", "Margherita"))
     @Test fun captionIsPunctuationAndCaseInsensitive() = assertEquals(8, pick("double cheese margherita", null))
     @Test fun fallsBackToRowContainingTheSlotValue() = assertEquals(8, pick("Double Cheese Pizza", "Double Cheese"))
+    @Test fun spokenPluralFallsBackToTheLongestWord() = assertEquals(4, pick("Margherita pizzas", "Margherita pizzas"))
     @Test fun noMatchingRowMeansNoTapNotTheFirstAdd() = assertNull(pick("Farmhouse Pizza", "Farmhouse"))
 
     @Test fun stepperIsFoundInTheItemsRow() {
@@ -38,6 +39,14 @@ class RowContextTest {
         assertEquals(10, s.minus.index)
         assertEquals(2, Steppers.find(nodes, "", "Margherita")!!.count)
         assertNull(Steppers.find(nodes, "", null)) // two steppers and no anchor: ambiguous, so none
+    }
+
+    @Test fun theStepperDrawnOnTopWins() {
+        nodes.clear()
+        n(0)
+        n(1); n(2, desc = "Margherita Pizza"); n(2); n(3, click = true); n(3, text = "1"); n(3, click = true) // menu behind
+        n(1); n(2, desc = "Margherita Pizza"); n(2); n(3, click = true); n(3, text = "1"); n(3, click = true) // cart on top
+        assertEquals(11, Steppers.find(nodes, "Margherita Pizza", "Margherita")!!.number.index)
     }
 
     @Test fun plainNumbersAreNotSteppers() {

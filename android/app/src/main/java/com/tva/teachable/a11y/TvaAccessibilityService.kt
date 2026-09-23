@@ -126,7 +126,9 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                         val n = SelectorMatcher.target(t.nodes, sel, i.getStringExtra("slot"), forTap = true)
                         n?.let { "#${it.index} ${it.resourceId} ${it.bounds} -> ${com.tva.teachable.core.ScreenGuard.action(t.nodes, it) ?: "allowed"}" } ?: "no target"
                     }
-                    "guard" -> com.tva.teachable.core.ScreenGuard.screen(tree().nodes)?.toString() ?: "no boundary"
+                    "guard" -> tree().nodes.let { n ->
+                        "screen=${com.tva.teachable.core.ScreenGuard.screen(n)} readyToPay=${com.tva.teachable.core.ScreenGuard.readyToPay(n)}"
+                    }
                     "scroll" -> scroll(tree()).toString()
                     "back" -> back().toString()
                     "rec_start" -> { startRecording(); "recording" }

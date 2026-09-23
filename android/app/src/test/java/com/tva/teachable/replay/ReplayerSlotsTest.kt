@@ -14,7 +14,10 @@ import org.junit.Test
 /** T4 item row, T5 quantity stepper, T6 saved address, and a demo-only interstitial that is not shown on replay. */
 class ReplayerSlotsTest {
     /** A cart-like screen whose stepper and delivery header really change when tapped. */
-    private class Cart(var qty: Int = 1, var address: String = "Home", val labels: List<String> = listOf("Home", "Work")) : Device {
+    private class Cart(
+        var qty: Int = 1, var address: String = "Home", val labels: List<String> = listOf("Home", "Work"),
+        val outOfRange: Set<String> = emptySet(),
+    ) : Device {
         var pickerOpen = false
         val tapped = mutableListOf<String>()
         private fun screen(): List<Triple<Int, String, Boolean>> = if (pickerOpen)
@@ -33,7 +36,7 @@ class ReplayerSlotsTest {
                 node.text == "+" -> qty++
                 node.text == "−" -> qty--
                 node.text.startsWith("25-30") -> pickerOpen = true
-                pickerOpen && node.text in labels -> { address = node.text; pickerOpen = false }
+                pickerOpen && node.text in labels && node.text !in outOfRange -> { address = node.text; pickerOpen = false }
             }
             return true
         }
@@ -73,6 +76,14 @@ class ReplayerSlotsTest {
         val r = Replayer(d, cfg = fast).run(flow(addrStep), mapOf("address" to "gym"))
         assertEquals("there's no saved address called \"gym\"", r.steps.last().error)
         assertEquals("Home", d.address)
+        assertTrue(!d.pickerOpen)
+    }
+
+    @Test fun addressTheAppRefusesIsReportedAndThePickerClosed() = runBlocking {
+        val d = Cart(address = "Work", outOfRange = setOf("Home"))
+        val r = Replayer(d, cfg = fast).run(flow(addrStep), mapOf("address" to "home"))
+        assertEquals("the app didn't switch to your \"home\" address, it may be outside the delivery area", r.steps.last().error)
+        assertEquals("Work", d.address)
         assertTrue(!d.pickerOpen)
     }
 

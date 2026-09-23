@@ -5,7 +5,6 @@ import com.tva.teachable.core.Boundary
 import com.tva.teachable.core.BoundaryKind
 import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
-import com.tva.teachable.core.RowContext
 import com.tva.teachable.core.ScreenGuard
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.SelectorMatcher
@@ -55,8 +54,14 @@ class Replayer(
             r.handover?.let { return RunResult(it.kind == BoundaryKind.PAYMENT, results, handover = it) }
             if (!r.ok) return RunResult(false, results, r.declined)
         }
-        val end = device.tree().nodes
-        return RunResult(true, results, handover = ScreenGuard.screen(end) ?: ScreenGuard.readyToPay(end))
+        val end = awaitStable().nodes
+        // An ordering flow ends where the user pays; the cart may still be loading after the last tap, so wait for it.
+        val ordering = flow.steps.any { it.type == StepType.SET_QUANTITY || it.type == StepType.CHOOSE_ADDRESS }
+        // A popup (a coupon offer) can hide the pay bar; the flow still ended where it was taught to stop, before paying.
+        val handover = ScreenGuard.screen(end) ?: ScreenGuard.readyToPay(end)
+            ?: if (ordering) poll(cfg.waitMs) { ScreenGuard.readyToPay(it.nodes) } ?: Boundary(BoundaryKind.PAYMENT, "order ready for review")
+            else null
+        return RunResult(true, results, handover = handover)
     }
 
     private suspend fun runStep(i: Int, step: FlowStep, next: FlowStep?, slots: Map<String, String>): StepResult {
@@ -118,22 +123,21 @@ class Replayer(
     }
 
     /**
-     * Text set while a screen is still opening can be wiped when the field initialises, so the screen is read back
-     * and the text set again if it did not stick.
+     * Text set while a screen is still opening can be wiped when the field initialises: if the screen does not react
+     * at all, the text is set again.
      */
     private suspend fun typeAndVerify(tree: LiveTree, node: UiNode, sel: Selector, value: String): Boolean {
         if (node.password) return device.type(tree, node, value) // never read back
-        // Read back from the whole screen: some fields keep reporting their hint and show the text elsewhere, often
-        // completed ("Domino's" -> "Domino's pizza"). Success = more of the screen mentions the value than before.
-        val want = RowContext.norm(value)
-        val mentions = { tt: LiveTree -> tt.nodes.count { !it.password && want in RowContext.norm(it.text) } }
-        val before = mentions(tree)
-        var t = tree
-        var n = node
+        // Typing into a screen that is still initialising gets wiped when the field resets: wait for it to settle.
+        var t = awaitStable()
+        var n = SelectorMatcher.target(t.nodes, sel, null, forTap = false) ?: node.also { t = tree }
+        // Some fields keep reporting their hint as their text, so "did it stick" is judged on the whole screen: any
+        // reaction (a clear button, a spinner, results) counts. Slow search results are the next step's wait to handle;
+        // retyping into a field that did react would only restart the search.
         repeat(TYPE_TRIES) {
+            val before = signature(t)
             if (!device.type(t, n, value)) return false
-            val stuck = poll(cfg.retryMs) { tt -> tt.takeIf { mentions(it) > before } }
-            if (stuck != null) return true
+            if (poll(cfg.retryMs) { tt -> tt.takeIf { signature(it) != before } } != null) return true
             android.util.Log.w("TVA", "replay: typed text did not show on screen, retrying")
             t = device.tree()
             n = SelectorMatcher.target(t.nodes, sel, null, forTap = false) ?: return false
@@ -141,9 +145,24 @@ class Replayer(
         return false
     }
 
+
     /** Only a tap with its own caption or row anchor proves the screen moved on; a bare text-field id exists everywhere. */
     private fun isDistinctive(step: FlowStep) = step.type == StepType.TAP &&
         (step.selector.text.isNotBlank() || step.selector.contentDesc.isNotBlank() || step.selector.near.isNotBlank())
+
+    /** Returns the screen once it has not changed for [QUIET_MS] (at most [cfg.settleMs] of waiting). */
+    private suspend fun awaitStable(): LiveTree {
+        var last = device.tree()
+        var quiet = 0L
+        var waited = 0L
+        while (quiet < QUIET_MS && waited < cfg.settleMs) {
+            delay(cfg.pollMs); waited += cfg.pollMs
+            val now = device.tree()
+            quiet = if (signature(now) == signature(last)) quiet + cfg.pollMs else 0
+            last = now
+        }
+        return last
+    }
 
     private fun signature(t: LiveTree) = t.nodes.take(200).joinToString("|") { "${it.resourceId}:${it.text}:${it.contentDesc}" }.hashCode()
 
@@ -158,8 +177,8 @@ class Replayer(
         val item = SLOT_TOKEN.find(step.selector.near)?.groupValues?.get(1)?.let { slots[it] }
         var last = -1
         repeat(MAX_QTY + 2) {
-            val t = device.tree()
-            val s = Steppers.find(t.nodes, near, item) ?: poll(cfg.waitMs) { Steppers.find(it.nodes, near, item) }
+            // Tree and stepper from the SAME read: a node is only tappable through the tree it was found in.
+            val (t, s) = poll(cfg.waitMs) { tt -> Steppers.find(tt.nodes, near, item)?.let { tt to it } }
                 ?: return StepResult(i, false, error = "couldn't find the quantity control for ${item ?: "the item"}")
             if (s.count == n) return StepResult(i, true)
             if (s.count == last) return StepResult(i, false, error = "the quantity stayed at ${s.count}")
@@ -191,7 +210,9 @@ class Replayer(
             return StepResult(i, false, error = "there's no saved address called \"$label\"")
         }
         device.tap(tree, node)
-        return if (waitFor(isChosen)) StepResult(i, true) else StepResult(i, false, error = "the delivery address didn't change to $label")
+        if (waitFor(isChosen)) return StepResult(i, true)
+        if (entry(device.tree()) != null) device.back() // still in the picker: close it rather than leave the user there
+        return StepResult(i, false, error = "the app didn't switch to your \"$label\" address, it may be outside the delivery area")
     }
 
     private fun resolved(sel: Selector, slots: Map<String, String>) = sel.copy(
@@ -232,6 +253,7 @@ class Replayer(
     private companion object {
         const val MAX_QTY = 20
         const val TYPE_TRIES = 3
+        const val QUIET_MS = 600L
         val SLOT_TOKEN = Regex("\\{\\{(\\w+)\\}\\}")
         // "25-30 mins to Home", "Deliver to Work", "Delivering to …": the control that opens the address picker.
         val ADDRESS_HEADER = Regex("\\b(deliver(ing|y)?\\s+to|mins?\\s+to)\\s+\\S", RegexOption.IGNORE_CASE)

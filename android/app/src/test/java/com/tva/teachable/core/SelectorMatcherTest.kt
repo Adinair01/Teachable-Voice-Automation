@@ -53,6 +53,10 @@ class SelectorMatcherTest {
     @Test fun slotTokensResolve() {
         assertEquals("burger near me", resolveSlots("{{query}} near me", mapOf("query" to "burger")))
     }
+
+    @Test fun spokenSlotMatchesDespitePunctuation() {
+        assertEquals(0, SelectorMatcher.find(listOf(node(0, text = "Domino's Pizza")), Selector(text = "dominos Pizza"))?.index)
+    }
 }
 
 class ConfirmTextTest {

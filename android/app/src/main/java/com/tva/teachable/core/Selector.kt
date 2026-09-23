@@ -112,6 +112,12 @@ object SelectorMatcher {
         }.takeIf { it.isNotEmpty() }
     }
 
-    private fun textMatches(actual: String, wanted: String, contains: Boolean) =
-        if (contains) actual.contains(wanted, ignoreCase = true) else actual.equals(wanted, ignoreCase = true)
+    // Punctuation- and spacing-insensitive as a second chance: a spoken slot ("dominos") rarely carries the app's
+    // apostrophes ("Domino's Pizza").
+    private fun textMatches(actual: String, wanted: String, contains: Boolean): Boolean {
+        if (if (contains) actual.contains(wanted, true) else actual.equals(wanted, true)) return true
+        val a = RowContext.norm(actual)
+        val w = RowContext.norm(wanted)
+        return w.isNotEmpty() && if (contains) w in a else a == w
+    }
 }

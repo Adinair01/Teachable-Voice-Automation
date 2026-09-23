@@ -46,8 +46,11 @@ object RowContext {
         val rows = candidates.map { it to of(nodes, it, sameKind, parent).map(::norm) }
         val n = norm(near)
         if (n.isNotEmpty()) rows.firstOrNull { (_, texts) -> n in texts }?.let { return it.first }
-        val f = norm(fallback.orEmpty())
-        if (f.isNotEmpty()) rows.firstOrNull { (_, texts) -> texts.any { f in it } }?.let { return it.first }
+        // The bare slot value, then its longest word: "Margherita pizzas" (spoken plural) still finds "Margherita Pizza".
+        val word = fallback.orEmpty().split(Regex("\\s+")).maxByOrNull { it.length }.orEmpty()
+        for (f in listOf(norm(fallback.orEmpty()), norm(word).takeIf { it.length >= 4 }.orEmpty()).distinct()) {
+            if (f.isNotEmpty()) rows.firstOrNull { (_, texts) -> texts.any { f in it } }?.let { return it.first }
+        }
         return null
     }
 
@@ -85,7 +88,8 @@ object Steppers {
         val all = all(nodes)
         if (near.isBlank() && fallback.isNullOrBlank()) return all.singleOrNull()
         val numbers = all.map { it.number }.toSet()
-        val hit = RowContext.pick(nodes, all.map { it.number }, near, fallback) { it in numbers } ?: return null
+        // Later in the tree = drawn on top: the cart's stepper, not the same dish's stepper on the menu behind it.
+        val hit = RowContext.pick(nodes, all.map { it.number }.reversed(), near, fallback) { it in numbers } ?: return null
         return all.first { it.number == hit }
     }
 }

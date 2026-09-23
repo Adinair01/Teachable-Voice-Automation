@@ -24,7 +24,7 @@ function tokenise(text, example, slot) {
 // Ordering/buying tasks get optional quantity + delivery-address slots even when the demo never touched them, so
 // "two pizzas" or "deliver to work" replays the same learned flow. Filled by the matcher, skipped on replay when empty.
 const ORDERING = /\b(order|buy|purchase|deliver|get me)\b/i;
-const IMPLIED_SLOTS = [{ name: 'quantity', example: '1' }, { name: 'address', example: 'home' }];
+export const IMPLIED_SLOTS = [{ name: 'quantity', example: '1' }, { name: 'address', example: 'home' }];
 
 /**
  * Turn a raw recorded demonstration into a reusable parameterised flow (deterministic slot detection):

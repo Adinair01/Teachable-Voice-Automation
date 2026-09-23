@@ -4,9 +4,9 @@ import { SttStream, synthesize } from '../lib/deepgram.js';
 import { Flow } from '../models/Flow.js';
 import { RunLog } from '../models/RunLog.js';
 import { extractIntent } from '../prompts/intent.js';
-import { normaliseSlots } from '../prompts/slots.js';
+import { normaliseSlots, withDefaults } from '../prompts/slots.js';
 import { matchFlow } from '../prompts/matchFlow.js';
-import { generalise } from '../services/generalise.js';
+import { generalise, IMPLIED_SLOTS } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
 import { parseOpenApp, resolveApp } from '../services/openApp.js';
 import { HANDOVER_KINDS, handoverLine } from '../services/handover.js';
@@ -100,7 +100,8 @@ export class Session {
     const m = flows.length ? await matchFlow(text, flows) : { ...(await extractIntent(text)), flowId: null };
     if (m.flowId) {
       const flow = flows.find((f) => String(f._id) === m.flowId);
-      this.send({ type: 'replay', flowId: m.flowId, utterance: text, flow, slots: normaliseSlots(m.slots) });
+      const slots = withDefaults(normaliseSlots(m.slots), flow.slots, IMPLIED_SLOTS.map((s) => s.name));
+      this.send({ type: 'replay', flowId: m.flowId, utterance: text, flow, slots });
       return this.say('Okay, doing that now.');
     }
     // No flow matched although some exist: for an eval set of paraphrases that is a miss, and the metric would
@@ -146,7 +147,10 @@ export class Session {
     if (r.utterance && !r.declined) await RunLog.create({ ...base, kind: 'match', success: r.success || !!r.handover });
     if (r.handover) return this.say(handoverLine(r.handover.kind));
     if (r.declined) return this.say('Okay, I stopped before that step.');
-    await this.say(r.success ? 'Done.' : 'Sorry, that did not work.');
+    if (r.success) return this.say('Done.');
+    // Never a generic "something went wrong": say where it stopped and why (the phone reports a specific reason).
+    const stop = r.steps.find((s) => !s.ok);
+    await this.say(stop ? `I stopped at step ${stop.i + 1}: ${stop.err ?? 'it did not work'}.` : 'I could not finish that.');
   }
 
   close() { this.stt?.finish().catch(() => {}); }
