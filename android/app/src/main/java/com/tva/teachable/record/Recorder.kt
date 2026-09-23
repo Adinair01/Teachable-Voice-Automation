@@ -5,13 +5,16 @@ import android.view.accessibility.AccessibilityEvent
 import com.tva.teachable.BuildConfig
 import android.view.accessibility.AccessibilityNodeInfo
 import com.tva.teachable.core.Expect
+import com.tva.teachable.a11y.UiTreeReader
 import com.tva.teachable.core.FlowStep
+import com.tva.teachable.core.ScreenGuard
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.StepType
 
 /**
  * Turns the user's own accessibility events into steps (selectors, never coordinates).
- * Typing is debounced into ONE type step per field. Password fields are never recorded.
+ * Typing is debounced into ONE type step per field. Password fields are never recorded, and nothing at all is recorded
+ * on a payment / OTP / login screen (ScreenGuard): an OTP is not a password field but must never be stored either.
  * Pure event->step logic; the service only forwards events.
  */
 private val IME = Regex("inputmethod|\\.ime$|keyboard", RegexOption.IGNORE_CASE)
@@ -32,8 +35,8 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         // The demo's launch step is the first real app the user touches (launcher taps are ignored by design).
         if (!launched) { steps += FlowStep(StepType.LAUNCH, value = pkg); launched = true }
         when (e.eventType) {
-            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> onText(e)
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> onClick(e)
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> if (!onBoundary(e)) onText(e) else pendingType = null
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> if (!onBoundary(e)) onClick(e) else pendingType = null
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> onWindow(pkg)
         }
     }
@@ -64,6 +67,12 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         flushType()
         val last = steps.lastOrNull() ?: return
         if (last.type == StepType.TAP && last.expect.packageName.isEmpty()) steps[steps.lastIndex] = last.copy(expect = Expect(packageName = pkg))
+    }
+
+    private fun onBoundary(e: AccessibilityEvent): Boolean {
+        val b = ScreenGuard.screen(UiTreeReader.readLive(e.source?.window?.root).nodes) ?: return false
+        Log.i("TVA", "recorder: not recording on a ${b.kind} screen (${b.reason})")
+        return true
     }
 
     private fun flushType() { pendingType?.let { steps += it }; pendingType = null }

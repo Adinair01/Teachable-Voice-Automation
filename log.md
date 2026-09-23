@@ -38,7 +38,7 @@ Read this file at the start of every session, together with HANDOFF.md and CLAUD
 - Batch all needs (keys, team name, phone actions) into ONE message.
 - Do NOT create the git tag `PRISM_GENAI_HACKATHON_Y2026` or push until Aditya confirms the repo is final.
 - Ask for the exact team name (CollegeName_TeamName) before generating any submission filenames.
-- Zomato/Swiggy = stretch only; stop before payment. Build core loop on WhatsApp / Settings / YouTube first.
+- (2026-09-23) Zomato is the PRIMARY target per the evaluation spec; never automate payment/OTP/login (runtime ScreenGuard).
 - If accessibility recording is too unreliable, say so plainly and propose the mirrored-screenshot teach-mode fallback.
 - Never claim something works unless tested; report failures with output.
 - Timeline: 2–3 days total, deadline 25 Sep 2026 11:59 PM IST.

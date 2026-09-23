@@ -168,9 +168,16 @@ class VoiceService : Service() {
         AppState.status.value = "Running: ${flow.description}"
         val gate = ConfirmationGate { step, _ -> askConfirmation("${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc }}".trim()) }
         val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate).run(flow, slots)
-        AppState.status.value = if (r.success) "Done" else if (r.declined) "Stopped" else "Failed"
-        AppState.log("replay ${if (r.success) "succeeded" else if (r.declined) "stopped by you" else "FAILED"}: ${r.steps.count { it.ok }}/${flow.steps.size}")
+        val outcome = when {
+            r.handover != null -> "Your turn"
+            r.success -> "Done"
+            r.declined -> "Stopped"
+            else -> "Failed"
+        }
+        AppState.status.value = outcome
+        AppState.log("replay $outcome: ${r.steps.count { it.ok }}/${flow.steps.size}${r.handover?.let { " (${it.reason})" }.orEmpty()}")
         client.send(JSONObject().put("type", "run_result").put("flowId", m.optString("flowId")).put("success", r.success).put("declined", r.declined)
+            .put("handover", r.handover?.let { JSONObject().put("kind", it.kind.name.lowercase()).put("reason", it.reason) } ?: JSONObject.NULL)
             .put("utterance", m.optString("utterance")).put("steps", JSONArray().also { a ->
                 r.steps.forEach { a.put(JSONObject().put("i", it.index).put("ok", it.ok).put("llm", it.usedLlmFallback).put("err", it.error ?: JSONObject.NULL)) } }))
     }

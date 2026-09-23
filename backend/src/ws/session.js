@@ -8,6 +8,7 @@ import { matchFlow } from '../prompts/matchFlow.js';
 import { generalise } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
 import { parseOpenApp, resolveApp } from '../services/openApp.js';
+import { HANDOVER_KINDS, handoverLine } from '../services/handover.js';
 
 /** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
 const TEACH_PROMPT = 'Do whatever you want to do on the screen so I can learn from it.';
@@ -26,6 +27,7 @@ const runResult = z.object({
   flowId: z.string().min(1),
   success: z.boolean(),
   declined: z.boolean().default(false),
+  handover: z.object({ kind: z.enum(HANDOVER_KINDS), reason: z.string().max(200) }).nullable().default(null),
   utterance: z.string().max(500).default(''),
   steps: z.array(z.object({ i: z.number(), ok: z.boolean(), llm: z.boolean().default(false), err: z.string().nullable().default(null) })).max(200).default([]),
 });
@@ -136,10 +138,12 @@ export class Session {
 
   async #logRun(r) {
     const base = { flowId: r.flowId, success: r.success, utterance: r.utterance };
-    await RunLog.create({ ...base, kind: 'replay', declined: r.declined, stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
+    await RunLog.create({ ...base, kind: 'replay', declined: r.declined, handover: r.handover?.kind, stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
     // A phrasing counts as correctly matched when the matched flow then ran to completion — or when the user
     // stopped it at a sensitive step, which says nothing about the match being wrong.
-    if (r.utterance && !r.declined) await RunLog.create({ ...base, kind: 'match' });
+    // A handover also means the right flow ran: it got as far as the user's own credentials or payment.
+    if (r.utterance && !r.declined) await RunLog.create({ ...base, kind: 'match', success: r.success || !!r.handover });
+    if (r.handover) return this.say(handoverLine(r.handover.kind));
     if (r.declined) return this.say('Okay, I stopped before that step.');
     await this.say(r.success ? 'Done.' : 'Sorry, that did not work.');
   }

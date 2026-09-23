@@ -210,15 +210,38 @@ Gmail" always fell into teach mode, and the demo (just opening the app) always p
   again. After this is done: re-render and re-eyeball the deck (photos on slide 7 come from the OLD screenshot video's
   frames and should be swapped for real frames from the new recording).
 
-## Next steps (in order — Aditya's explicit priority list, 2026-09-22)
-1. ~~Rotate both API keys~~ DONE (2026-09-22, verified working).
-2. **Live-recorded demo video with Aditya's real voice** (scrcpy, not screenshots) — IN PROGRESS, waiting on Aditya at
-   the phone. See section above for the exact plan.
-3. ~~Fix deck text overflow~~ DONE (2026-09-22) — but re-check after step 2 swaps in real device photos.
-4. Create the public GitHub repo and push `main` — **WAIT for Aditya's explicit go-ahead**, do not do this
-   proactively. He said he'll tell us when.
-5. Only after Aditya confirms the repo is final: create + push the `PRISM_GENAI_HACKATHON_Y2026` tag — **WAIT, do not
-   run until explicitly told**.
+## SCOPE UPDATE 2026-09-23 — evaluation spec received (see CLAUDE.md "EVALUATION SPEC")
+Judges teach a NEW flow live and run T1–T14 on it; Zomato food ordering is now the primary target. Everything built
+so far is the foundation (nothing thrown away); the Settings/Calculator/Clock flows become secondary proof.
+The old screenshot demo video is superseded: new video = one unedited scrcpy recording, (a) teach (b) exact replay
+(c) paraphrase (d) changed slot (e) asks a question when stuck.
+
+### T11 credential boundary — BUILT + unit-tested, NOT yet device-tested (2026-09-23)
+- `core/ScreenGuard.kt` (pure Kotlin): `screen(nodes)` flags PASSWORD (any isPassword node), PAYMENT (known UPI/wallet
+  packages, gateway SDK resource ids razorpay/juspay/payu/…, card-number/CVV/expiry inputs, payment-page titles, or ≥3
+  distinct payment methods listed), OTP (input labelled/id'd otp/PIN, or 4–8 digit boxes next to an OTP caption), LOGIN
+  (login/sign-in caption + phone/email input). `action(nodes,node)` / `actionText()` flag taps that commit money/order
+  (pay, place order, proceed to pay, buy now, swipe to pay, checkout…), incl. the target's subtree text.
+- Replayer: screen check before every non-launch step and on the final screen; action check on the resolved target
+  (also LLM-fallback picks) and on the step's selector BEFORE the confirmation gate (payment hands over, never asks).
+  `RunResult.handover`; a PAYMENT handover with earlier steps done = success (reaching payment is the goal of T2).
+- Recorder: records nothing (taps or typing) while the current screen is a boundary — an OTP field is not isPassword.
+- Backend: `run_result.handover {kind, reason}` validated, stored on RunLog.handover, spoken via
+  `services/handover.js` ("You're at the payment step. Your turn: …"). Match row counts handover as a correct match.
+- Deliberate: the cart screen with a "Place Order" button is NOT a screen boundary (T6 address pick happens there);
+  only tapping the commit button is. Thresholds need tuning against Zomato's real tree.
+- Tests: Kotlin 26 pass (ScreenGuardTest 11, ReplayerGuardTest 4 new), backend 18 pass, debug APK builds.
+
+## Next steps (in order — 2026-09-23 scope)
+1. PHONE (needs Aditya): connect USB + `adb reverse tcp:3100 tcp:3100`; install Zomato, log in, saved Home + Work.
+2. Dump Zomato's tree (`tools/a11y.sh show`) on home, search, restaurant menu, item customisation sheet, cart, address
+   sheet, payment page. GO/NO-GO within ~2h: if mostly unlabeled/empty -> STOP and report (pivot: Domino's app).
+   Confirm Domino's is a storefront on Zomato in our area; else pick the closest real substitute.
+3. Device-test T11 on the real payment/OTP/login screens (incl. a flow NOT flagged sensitive); tune ScreenGuard.
+4. T1–T6 live on the phone (new slot types: item picked from menu/search, quantity stepper, saved address).
+5. Tier 2 (T7, T10, T12, T13, T14), then Tier 3 only if time.
+6. Deliverables: new unedited video, README/deck (5 named architecture parts + diagrams, target apps, limitations).
+7. Repo push + tag: WAIT for Aditya's explicit go-ahead (unchanged).
 
 ## Open items
 - Live demo-video recording session with Aditya (blocks final video + possibly deck slide 7 photos).

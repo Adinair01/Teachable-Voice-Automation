@@ -2,7 +2,10 @@ package com.tva.teachable.replay
 
 import com.tva.teachable.a11y.LiveTree
 import com.tva.teachable.core.Flow
+import com.tva.teachable.core.Boundary
+import com.tva.teachable.core.BoundaryKind
 import com.tva.teachable.core.FlowStep
+import com.tva.teachable.core.ScreenGuard
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.SelectorMatcher
 import com.tva.teachable.core.StepType
@@ -25,9 +28,16 @@ fun interface ConfirmationGate { suspend fun confirm(step: FlowStep, slots: Map<
 val DenyAll = ConfirmationGate { _, _ -> false }
 
 data class ReplayConfig(val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300)
-data class StepResult(val index: Int, val ok: Boolean, val usedLlmFallback: Boolean = false, val error: String? = null, val declined: Boolean = false)
-/** [declined] = the user said no to a sensitive step. That is the safety feature working, not a failed replay. */
-data class RunResult(val success: Boolean, val steps: List<StepResult>, val declined: Boolean = false)
+data class StepResult(
+    val index: Int, val ok: Boolean, val usedLlmFallback: Boolean = false, val error: String? = null,
+    val declined: Boolean = false, val handover: Boundary? = null,
+)
+/**
+ * [declined] = the user said no to a sensitive step. That is the safety feature working, not a failed replay.
+ * [handover] = the run hit a payment/OTP/login/password boundary and gave the phone back. Reaching payment is the
+ * end of every ordering flow, so a PAYMENT handover with all earlier steps done is a success.
+ */
+data class RunResult(val success: Boolean, val steps: List<StepResult>, val declined: Boolean = false, val handover: Boundary? = null)
 
 class Replayer(
     private val device: Device,
@@ -40,12 +50,19 @@ class Replayer(
         for ((i, step) in flow.steps.withIndex()) {
             val r = runStep(i, step, slots)
             results += r
+            r.handover?.let { return RunResult(it.kind == BoundaryKind.PAYMENT, results, handover = it) }
             if (!r.ok) return RunResult(false, results, r.declined)
         }
-        return RunResult(true, results)
+        return RunResult(true, results, handover = ScreenGuard.screen(device.tree().nodes))
     }
 
     private suspend fun runStep(i: Int, step: FlowStep, slots: Map<String, String>): StepResult {
+        // Checked on the live screen before every step, whatever was flagged while teaching: nothing but launching
+        // the app (which touches no screen) is allowed once a credential or payment screen is up.
+        if (step.type != StepType.LAUNCH && step.type != StepType.WAIT) {
+            ScreenGuard.screen(device.tree().nodes)?.let { return handover(i, it) }
+        }
+        if (step.type == StepType.TAP) ScreenGuard.actionText("${step.selector.text} ${step.selector.contentDesc}")?.let { return handover(i, it) }
         if (step.sensitive && !gate.confirm(step, slots)) return StepResult(i, false, error = "sensitive step not confirmed", declined = true)
         val value = resolveSlots(step.value, slots)
         return when (step.type) {
@@ -80,9 +97,12 @@ class Replayer(
             tree.nodes.getOrNull(idx ?: -1)?.let { found = tree to it; fallback = true }
         }
         val (tree, node) = found ?: return StepResult(i, false, error = "target not found")
+        if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
         val acted = if (isTap) device.tap(tree, node) else device.type(tree, node, value)
         return finish(i, step, acted, fallback)
     }
+
+    private fun handover(i: Int, b: Boundary) = StepResult(i, false, error = "handed over: ${b.reason}", handover = b)
 
     /** Post-action check: `expect` (package / text) must appear within the wait window. */
     private suspend fun finish(i: Int, step: FlowStep, acted: Boolean, fallback: Boolean = false): StepResult {
