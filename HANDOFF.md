@@ -389,17 +389,20 @@ VERIFIED live:
 - **T5** "Order two Margherita pizzas ..." -> cart row stepper = 2, Rs228, 12/12, handover payment.
 - T11 payment boundary re-observed at the real cart each run (handover, no tap past the cart). Login/OTP still unit-only.
 - **T13** typed "Order pizza" -> "Which pizza?" (nothing tapped); "never mind" -> "Okay, I cancelled that." (read from the
-  app's live log; audio not heard). The follow-up answer path ("margherita" -> replay) is NOT yet run live.
+  app's live log; audio not heard). 
 - **T14 fail case** typed "Did the last run succeed?" after a real failure -> "No. The last run of ... stopped at step 12,
   choosing the delivery address: the app didn't switch to your "home" address, it may be outside the delivery area."
-  T14 PASS case not yet run.
+  **T14 pass case** (after a real handover run): "The last run of ... reached the payment screen and handed over to you. That is where it stopped."
+- **T6 work**: "... deliver to work" -> header "to Work", Margherita x1, handover payment, 12/12 (WEAK: Work was already selected).
+- **T13 follow-up**: "Order pizza" -> "Which pizza?", then "margherita" -> replay ran (RunLog utterance "margherita", 12/12,
+  handover payment, cart Margherita x1).
 
 LEGITIMATE FAILURE, NOT A BUG — T6 home: "... and deliver to home" stopped at step 12 (choose_address) with a specific
 reason. The address sheet (read-only look, nothing selected) shows Work under DELIVERS TO and Home (939 km) + Hotel
 (275 km) under DOES NOT DELIVER TO, so Domino's cannot deliver to Home from this account. Do NOT force Home to work.
 Consequence: Work is already Zomato's selected address, so a "deliver to work" run passes without switching anything;
 this account has no second deliverable address, so the picker's switching path (choose_address opening the sheet and
-tapping a saved label) is CODED, NOT verified. T6-work run is still to do (weak test on this account).
+tapping a saved label) is CODED, NOT verified. T6-work has since been run (see above).
 
 CODED, not run on the phone: T12 ("Book a cab" -> matcher returns no flow; reply is now "I haven't learned that yet. Show
 me once: do it on the screen, then say done." and teach mode opens; there is no cancel once teach mode is open), the T13
@@ -412,8 +415,7 @@ Gotchas: `adb shell input tap` on anything that removes/changes cart contents is
 the USER empties the cart between runs. Groq free tier 429s on bursts (sleep between matcher calls).
 
 ## Next steps (immediate, in order)
-1. T6-work (user empties cart first), then T14 pass case, then T13 follow-up ("margherita") live.
-2. Go/no-go on T7, T10, T8/T9 (see the assessment given to the user this session).
+1. T7 + T10 plans agreed with the user first, then build. T8/T9 (Amazon) go/no-go only after T7/T10/deliverables.
 3. Deliverables: unedited scrcpy recording in the required order, README/deck (5 named architecture parts, target apps,
    limitations incl. Zomato findings and the address-sheet finding), fresh secrets scan of history (49d20eb is no longer in
    the repo; the earlier rewrite + key rotation is recorded above; re-scan before any push).
