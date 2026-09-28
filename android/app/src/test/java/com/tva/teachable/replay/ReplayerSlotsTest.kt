@@ -27,6 +27,7 @@ class ReplayerSlotsTest {
             Triple(1, "", false), Triple(2, "Margherita Pizza", false), Triple(2, "", false),
             Triple(3, "−", true), Triple(3, "$qty", false), Triple(3, "+", true),
             Triple(1, "ADD", true), // Gold-membership style ADD elsewhere on the page
+            Triple(1, "Bill details", false), // a real cart always shows its bill; the run must see it to call the order ready
         )
         override fun tree() = LiveTree(screen().mapIndexed { i, (d, t, c) -> UiNode(i, d, "com.application.zomato", "", t, "", "", "", c, false, false, false) }, emptyList())
         override fun launch(packageName: String) = true

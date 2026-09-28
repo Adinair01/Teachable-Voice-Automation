@@ -2,6 +2,7 @@ package com.tva.teachable.replay
 
 import com.tva.teachable.a11y.LiveTree
 import com.tva.teachable.core.Boundary
+import com.tva.teachable.core.CartState
 import com.tva.teachable.core.BoundaryKind
 import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
@@ -64,9 +65,19 @@ class Replayer(
         val ordering = flow.steps.any { it.type == StepType.SET_QUANTITY || it.type == StepType.CHOOSE_ADDRESS }
         // A popup (a coupon offer) can hide the pay bar; the flow still ended where it was taught to stop, before paying.
         val handover = ScreenGuard.screen(end) ?: ScreenGuard.readyToPay(end)
-            ?: if (ordering) poll(cfg.waitMs) { ScreenGuard.readyToPay(it.nodes) } ?: Boundary(BoundaryKind.PAYMENT, "order ready for review")
+            ?: if (ordering) poll(cfg.waitMs) { ScreenGuard.readyToPay(it.nodes) } ?: cartHandover(end)
             else null
+        if (ordering && handover == null) return notAtCart(flow, results)
         return RunResult(true, results, handover = handover)
+    }
+
+    /** The pay bar can be hidden by a popup; the cart's own captions still prove this is where the order ends. */
+    private fun cartHandover(nodes: List<UiNode>): Boundary? =
+        if (nodes.any { CART_EVIDENCE.containsMatchIn(it.text + " " + it.contentDesc) }) Boundary(BoundaryKind.PAYMENT, "order ready for review") else null
+
+    private fun notAtCart(flow: Flow, results: List<StepResult>): RunResult {
+        val err = "I did every step, but I'm not on the cart or checkout screen, so I can't say the order is ready. This screen shows ${ScreenSummary.of(device.tree().nodes)}."
+        return RunResult(false, results + StepResult(flow.steps.size, false, error = err))
     }
 
     private suspend fun runStep(i: Int, step: FlowStep, next: FlowStep?, slots: Map<String, String>): StepResult {
@@ -107,6 +118,8 @@ class Replayer(
         if (found == null && sel.near.isNotEmpty()) {
             // Row-anchored target (the ADD in the Farmhouse row) may be further down the list. Never handed to the LLM:
             // a wrong guess here adds the wrong dish.
+            // Asked before scrolling: once the list has moved on, the item's own row (and its stepper) is out of view.
+            alreadyInCart(step, slots)?.let { return StepResult(i, false, error = it) }
             repeat(cfg.scrollTries) {
                 if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, probe)
             }
@@ -118,7 +131,10 @@ class Replayer(
         if (found == null && picker != null && llmPicks < MAX_LLM_PICKS) {
             val tree = device.tree()
             val idx = picker.pick(step, slots, tree.nodes)
-            tree.nodes.getOrNull(idx ?: -1)?.let { found = tree to it; fallback = true; llmPicks++ }
+            // A guess must never be the one that throws the user's cart or data away ("Replace", "Clear").
+            tree.nodes.getOrNull(idx ?: -1)?.takeUnless { CartState.DESTRUCTIVE.containsMatchIn(it.text + " " + it.contentDesc) }
+                ?.takeIf { plausible(step, sel, it) }
+                ?.let { found = tree to it; fallback = true; llmPicks++ }
         }
         val (tree, node) = found ?: return StepResult(i, false, error = stuck(targetLabel(step, sel)))
         if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
@@ -222,6 +238,27 @@ class Replayer(
         return StepResult(i, false, error = "the app didn't switch to your \"$label\" address, it may be outside the delivery area")
     }
 
+    /** The row we were sent to has a quantity stepper instead of the control: the item is already in the cart (T7). */
+    private fun alreadyInCart(step: FlowStep, slots: Map<String, String>): String? {
+        val near = resolveSlots(step.selector.near, slots)
+        val item = SLOT_TOKEN.find(step.selector.near)?.groupValues?.get(1)?.let { slots[it] }
+        val stepper = Steppers.find(device.tree().nodes, near, item) ?: return null
+        return "\"${item ?: near}\" is already in your cart, ${stepper.count} of it. Should I add another one, or leave it as it is?"
+    }
+
+    /**
+     * A guess is only acted on when it looks like the step's own control (shares a word with it) or is a plain way out
+     * of a popup. Otherwise a wrong pick opens some unrelated screen and the rest of the run "succeeds" against it.
+     */
+    private fun plausible(step: FlowStep, sel: Selector, node: UiNode): Boolean {
+        val caption = listOf(node.text, node.contentDesc).map { it.trim() }
+        if (caption.any { DISMISS.matches(it) }) return true
+        val want = words("${sel.text} ${sel.contentDesc} ${step.value}")
+        return words(caption.joinToString(" ")).any { it in want }
+    }
+
+    private fun words(s: String) = s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 3 }.toSet()
+
     private fun targetLabel(step: FlowStep, sel: Selector): String =
         (sel.text.ifBlank { sel.contentDesc }.ifBlank { step.selector.resourceId.substringAfterLast('/') }).let { if (it.isBlank()) "the next control" else "\"$it\"" }
 
@@ -232,8 +269,14 @@ class Replayer(
     private fun stuck(what: String): String {
         val nodes = device.tree().nodes
         val pkg = nodes.firstOrNull()?.packageName.orEmpty()
+        CartState.replacePrompt(nodes)?.let {
+            return "the app is asking \"$it\". Continuing would replace what is already in your cart, so I won't. Should I go ahead, or would you like to sort your cart out first?"
+        }
         if (appPackage.isNotEmpty() && pkg.isNotEmpty() && pkg != appPackage) {
             return "I'm not in the app any more, this screen belongs to ${pkg.substringAfterLast('.')}. Can you take me back to it so I can continue?"
+        }
+        CartState.itemsInCart(nodes)?.let { n ->
+            return "I can't find $what, and your cart already has $n item${if (n == 1) "" else "s"}, which may be in the way. Should I add to it anyway, or would you like to clear it first?"
         }
         return "I can't find $what. This screen shows ${ScreenSummary.of(nodes)}. What should I do?"
     }
@@ -276,6 +319,9 @@ class Replayer(
     private companion object {
         const val MAX_QTY = 20
         const val MAX_LLM_PICKS = 2
+        val DISMISS = Regex("^(close|skip|not now|maybe later|no thanks|got it|ok|okay|allow|cancel|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
+        // Words a cart or checkout screen shows even when a popup hides its pay bar.
+        val CART_EVIDENCE = Regex("pay using|place order|bill details|to pay|grand total|item total", RegexOption.IGNORE_CASE)
         const val TYPE_TRIES = 3
         const val QUIET_MS = 600L
         val SLOT_TOKEN = Regex("\\{\\{(\\w+)\\}\\}")

@@ -413,6 +413,20 @@ tapping a saved label) is CODED, NOT verified. T6-work has since been run (see a
   URL", ...  What should I do?", no tap made (llm:false). Wrong-app wording, the pick cap and PII filtering are unit-tested
   only (Kotlin: 50 tests pass, 4 new in ReplayerStuckTest). Not tested: a real logged-out/foreign-language Zomato.
 
+- **T7 (pre-existing cart) — bugs found live, then fixed (CODED, only partly re-verified):** with Margherita x1 already in the
+  cart, replaying "Order a Margherita pizza ..." (a) ADDED THE WRONG DISH ("Double Cheese Margherita Pizza", Rs199) because
+  the exact row had a stepper instead of ADD and the loose row match fell through to a look-alike -> RowContext.pick now
+  refuses a neighbour when a caption exactly naming the item is on screen; Replayer.alreadyInCart then asks "\"X\" is
+  already in your cart, N of it. Add another, or leave it as it is?" (b) an LLM fallback pick tapped an unrelated "friends"
+  tag and the run still reported success ("order ready for review" was claimed without checking the screen) ->
+  LLM picks must now share a word with the step's target or be a plain dismiss control (Close/Skip/Got it/...), and an
+  ordering flow that ends without cart evidence ("pay using / place order / bill details ...") is a FAILURE with a
+  specific message. (c) Zomato's MENU stepper keeps its count in contentDesc (text is empty) - Steppers now read both.
+  (d) CartState (cart bar "View Cart / N item", "replace cart?" prompt) feeds the question wording; replace/clear/remove
+  are never chosen by a guess. Kotlin 56 tests pass. LIVE STATE AFTER THOSE RUNS: the user's cart contains the stray
+  Double Cheese Margherita (+ Margherita x1) and Zomato was left on a "Dishes loved by friends" sheet -> user must
+  check/empty the cart. The three fixes above have NOT yet been re-run live.
+
 CODED, not run on the phone: T12 ("Book a cab" -> matcher returns no flow; reply is now "I haven't learned that yet. Show
 me once: do it on the screen, then say done." and teach mode opens; there is no cancel once teach mode is open), the T13
 follow-up reply path, T10, T7 beyond the upsell-interstitial skip. NOT STARTED: T8/T9 (no second app taught), Tier 3.

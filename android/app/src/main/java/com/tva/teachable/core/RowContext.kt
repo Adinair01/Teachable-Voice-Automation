@@ -46,6 +46,9 @@ object RowContext {
         val rows = candidates.map { it to of(nodes, it, sameKind, parent).map(::norm) }
         val n = norm(near)
         if (n.isNotEmpty()) rows.firstOrNull { (_, texts) -> n in texts }?.let { return it.first }
+        // The item itself is on screen but its row has no such control (a dish already in the cart shows a stepper
+        // instead of ADD): a neighbour that merely contains the words ("Double Cheese Margherita Pizza") is a different dish.
+        if (n.isNotEmpty() && nodes.any { !it.editable && !it.password && (norm(it.text) == n || norm(it.contentDesc) == n) }) return null
         // The bare slot value, then its longest word: "Margherita pizzas" (spoken plural) still finds "Margherita Pizza".
         val word = fallback.orEmpty().split(Regex("\\s+")).maxByOrNull { it.length }.orEmpty()
         for (f in listOf(norm(fallback.orEmpty()), norm(word).takeIf { it.length >= 4 }.orEmpty()).distinct()) {
@@ -72,14 +75,17 @@ data class Stepper(val count: Int, val minus: UiNode, val plus: UiNode, val numb
 object Steppers {
     private val NUMBER = Regex("^\\d{1,2}$")
 
+    private fun count(n: UiNode) = n.text.ifBlank { n.contentDesc }.trim()
+
     fun all(nodes: List<UiNode>): List<Stepper> {
         val parent = RowContext.parents(nodes)
-        return nodes.filter { !it.editable && NUMBER.matches(it.text.trim()) }.mapNotNull { n ->
+        // Zomato's menu stepper keeps its count in contentDesc; its cart stepper keeps it in text.
+        return nodes.filter { !it.editable && NUMBER.matches(count(it)) }.mapNotNull { n ->
             val siblings = nodes.filter { parent[it.index] == parent[n.index] && parent[n.index] >= 0 }
             val at = siblings.indexOf(n)
             val minus = siblings.getOrNull(at - 1)?.takeIf { it.clickable }
             val plus = siblings.getOrNull(at + 1)?.takeIf { it.clickable }
-            if (minus != null && plus != null) Stepper(n.text.trim().toInt(), minus, plus, n) else null
+            if (minus != null && plus != null) Stepper(count(n).toInt(), minus, plus, n) else null
         }
     }
 
