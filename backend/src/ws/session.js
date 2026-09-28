@@ -121,6 +121,10 @@ export class Session {
     const actionable = g.steps.filter((s) => s.type !== 'launch').length;
     const ok = actionable >= 1 && (g.slots.length === 0 || g.slotsFound);
     if (!ok) {
+      // A failed learn used to leave no trace of what was actually recorded, making it undebuggable after the fact.
+      logger.warn({ command: body.command, slots: g.slots, actionable, slotsFound: g.slotsFound,
+        steps: body.steps.map((s) => ({ type: s.type, text: s.selector?.text, desc: s.selector?.contentDesc,
+          value: s.value, context: s.context })) }, 'learn failed');
       await this.#logLearn(false, body.command);
       this.send({ type: 'teach_failed' }); // lets the phone drop out of "Saving…" instead of hanging there
       return this.say(g.slots.length && !g.slotsFound

@@ -55,7 +55,10 @@ export function generalise({ command, intentKey, slots, steps }) {
       }
     }
     // A control repeated once per row (every dish's ADD) is anchored to the row caption that names the slot value.
-    if (step.type === 'tap' && context.length) {
+    // Only when the tap's OWN text/desc did not already carry the slot: a self-labelled tap (a search result whose
+    // own caption IS the varying value) must fall through to the substring-contains slot match instead — templating
+    // `near` from the same text here would require an exact match on a caption that intentionally changes per row.
+    if (step.type === 'tap' && context.length && !step.slotRef) {
       for (const [slot, example] of slotEntries) {
         const near = context.map((c) => tokenise(c, example, slot)).filter(Boolean).sort((a, b) => a.length - b.length)[0];
         if (near) { sel.near = near; step.slotRef ??= slot; break; }

@@ -6,7 +6,7 @@ from "Next steps". At the end of every session/milestone → update this file (s
 ## Project
 Teachable Voice Automation (Samsung PRISM Gen AI Hackathon, Theme 3). Full spec: CLAUDE.md. Rules: log.md.
 Dir: /Users/adityanair/Teachable voice Automation. Owner: Aditya Nair (Node dev, no Android experience).
-Deadline: 25 Sep 2026 11:59 PM IST (aiming for 2–3 day build).
+Deadline: **30 Sep 2026 11:59 PM IST** (moved from 25 Sep as of the 2026-09-28 session; see that session's notes).
 
 ## Environment (as of 2026-09-20)
 - macOS, node v26, npm 11, Docker 29, JDK 17, git.
@@ -301,6 +301,88 @@ The old screenshot demo video is superseded: new video = one unedited scrcpy rec
 5. Tier 2 (T7, T10, T12, T13, T14), then Tier 3 only if time.
 6. Deliverables: new unedited video, README/deck (5 named architecture parts + diagrams, target apps, limitations).
 7. Repo push + tag: WAIT for Aditya's explicit go-ahead (unchanged).
+
+## Session 2026-09-28 — deadline moved to 30 Sept 2026 11:59 PM IST. RULE THIS SESSION: nothing in this log is marked
+done/verified unless watched live on the real phone this session; unit tests alone are marked CODED, NOT DEVICE-VERIFIED.
+
+**Goal for the session:** live-verify T1 (fresh teach) through T6, then Tier 2. **Result: T1 is still not verified —
+zero flows were successfully taught this session (every attempt failed to save).** Found and fixed three real bugs
+along the way; the session ended blocked on the phone dropping off adb (see below), not by choice.
+
+BUGS FOUND + FIXED (root-caused from live Mongo/RunLog/logcat evidence, not guessed):
+1. **Restaurant-slot templating bug** (`backend/src/services/generalise.js`): a tap whose OWN caption carries the slot
+   value (e.g. tapping a search result named after the restaurant) was ALSO getting a `near` row-anchor templated from
+   the same text, which requires an EXACT text match on replay ("{{restaurant}} Pizza" -> "zulu's pizza Pizza") and
+   silently returns zero candidates for any restaurant whose label doesn't literally end in that exact resolved
+   string — the substring-fallback that would have handled it never runs because `near` routes matching through the
+   strict row-anchor path first. Fixed: skip templating `near` when the tap's own text/desc already carried the slot.
+   CODED + unit-verified (new regression test in `generalise.test.js`); **not device-verified** (this specific
+   scenario — substituting a different restaurant into an existing flow — is not actually one of T1-T6; found because
+   Aditya naturally tried a different restaurant against the old pre-existing flow before it was deleted).
+2. **Mic/status overlay physically occludes app content during teach mode** (`Overlay.kt`): the panel's default
+   resting spot (~62% down screen, edge-hugging) sits directly on top of the primary-action zone most apps use
+   (confirmed visually: it covered Zomato's View Cart bar, ADD buttons, and the "Add more items" row in screenshots
+   taken mid-session). Since it's a `TYPE_ACCESSIBILITY_OVERLAY` window with no NOT_TOUCHABLE flag, any tap landing in
+   its bounds is consumed by the panel and never reaches the teach-mode touch-catcher underneath. Fixed: panel now
+   docks to a thin strip just under the status bar while `teaching` is true, and restores the user's own dragged
+   position when teaching ends. **Visually confirmed on-device** (screenshotted mid-teach, panel sits clear of
+   content); not yet confirmed to be sufficient on its own since bug 3 (below) was masking it in every test run.
+3. **Root cause of "only the first tap ever gets recorded, then nothing"** (`TouchCatcher.kt`), the dominant bug this
+   session — reproduced identically across three independent attempts, different apps each time (Zomato, then a
+   Bluetooth-settings attempt that captured only the app-launch, then a Wi-Fi attempt that captured nothing at all).
+   `setTouchable(v, true)` (which lets the invisible full-screen touch-catcher start seeing touches again after
+   re-delivering a gesture to the real app) is ONLY called from `GestureResultCallback.onCompleted`/`onCancelled`. On
+   this device (Realme RMX3771 / ColorOS, Android 15) that callback can simply never fire, which leaves the overlay
+   permanently non-touchable for the rest of the teach session — every tap after the first passes straight through to
+   the app and is never recorded, with no error, no crash, nothing in the log. Fixed: added a token-guarded 1200ms
+   fallback that force-restores touchability even if the callback never comes. **CODED, NOT YET DEVICE-VERIFIED** —
+   the one live retest attempted after this fix was inconclusive (see below) and then the phone dropped off adb
+   entirely. Confirmed by reading `ActionExecutor.kt` that **replay is unaffected**: it uses
+   `performAction(ACTION_CLICK)`, not gesture dispatch, so this bug class is isolated to teach-mode recording only.
+4. Added diagnostic logging (`backend/src/ws/session.js`, `logger.warn` on a failed `#learn`) that dumps the raw
+   command, extracted slots, and raw recorded steps — this is what made bugs 1 and 3 findable at all; before this, a
+   failed teach left literally no trace beyond a bare RunLog row. Recommend keeping this permanently.
+
+OTHER FINDINGS (not code bugs, workflow/UX gaps worth fixing before the judged run):
+- Aditya's natural workflow (double-tap for hands-free, then narrate what he's about to do WHILE also describing it
+  verbally, before physically doing it) repeatedly produced long garbled trigger commands ("So we go here in Zomato.
+  Then we search... Ask user where exactly do he need to order it from...") that got extracted as garbage slots, and
+  "done"-equivalent utterances that didn't literally start with done/finished/etc never matched `DONE` regex in
+  `session.js`, so `teach_finish` never fired and stray new teach cycles chained instead. Not touched yet. Likely
+  worth: (a) coaching to use a short clean trigger + hold-to-talk or typed "done" during testing, (b) longer-term,
+  loosening `DONE` matching and/or giving live "N steps recorded" feedback during teach mode so a stuck/confused
+  session is visible before "done" is said — good candidate to fold into the T13/T10 work.
+- Deleted the stale pre-existing flow "Order a Margherita pizza from Domino's on Zomato" (Mongo id
+  `6ab382cec6b891111bfc89dd`, created 2026-09-23, predates today's fixes) with Aditya's explicit go-ahead, specifically
+  so T1 could be taught genuinely live rather than matching an old flow as a restaurant-slot paraphrase.
+- Twice this session the phone was found sitting on Zomato's REAL checkout page (once with a stray "1 item"/₹196
+  Margherita in cart, once showing "Place Order ₹249.74" with Paytm UPI selected) as a side effect of failed/aborted
+  demo attempts. Flagged to Aditya both times; nothing was tapped by the assistant. Aditya said he'd clear the cart
+  himself — **not independently re-confirmed empty**, check before the next live session.
+- Phone battery was at 1-5% (fluctuating) for this entire session despite being "on charge" — climbed only 1% in over
+  an hour. **Session ended with the phone gone from `adb devices` entirely** (suspected battery death, last seen at
+  5%, last `ws client disconnected` in backend logs at the same time). Get it on a charger that actually charges it
+  (verify with the phone's own battery %, not just "plugged in") before the next session, or nothing below can be
+  live-verified.
+
+STATUS TABLE (separated per the session rule):
+- T1 (fresh live teach): **NOT VERIFIED.** Blocked on the phone dying mid-retest of bug 3's fix.
+- T2-T6, T7/T10/T12/T13/T14: **NOT STARTED** this session (never got past T1).
+- generalise.js self-labelled-tap fix: CODED, unit-verified, not device-verified.
+- Overlay top-docking during teach: visually confirmed on-device, not yet proven sufficient end-to-end.
+- TouchCatcher touchability-timeout fix: CODED, NOT device-verified.
+- Failed-learn diagnostic logging: CODED, working as observed (produced the logs quoted above).
+
+## Next steps (immediate, in order)
+1. Get the phone reliably charging/charged and back on adb before anything else.
+2. Redo the exact minimal test from this session — typed "turn on wifi" (or similar) trigger, ONE physical tap in the
+   real Settings app, typed "done" — and confirm via `docker compose logs backend` that `steps` now contains more
+   than just the launch entry. This is the one thing that must be seen before trusting any further teach attempt.
+3. Once recording is confirmed reliable: fresh live T1 ("Order a Margherita pizza from Domino's on Zomato", stop
+   before payment, confirm "Learned: ..."), then T2-T6 in order, then Tier 2 (T7, T10, T12, T13, T14).
+4. Re-verify generalise.js fix (#1 above) live if time allows — swap restaurants against a taught flow.
+5. Git history rewrite (purge old committed keys, commit 49d20eb) — planned for after T1-T6 are solid, not started.
+6. Repo push + tag: still explicitly WAITING for Aditya's go-ahead.
 
 ## Open items
 - Live demo-video recording session with Aditya (blocks final video + possibly deck slide 7 photos).

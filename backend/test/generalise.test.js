@@ -89,6 +89,29 @@ test('ordering demo: loose slot matching, row-anchored ADD, implied quantity + a
   assert.deepEqual(f.slots.map((s) => s.name), ['item', 'restaurant', 'quantity', 'address']);
 });
 
+test('a self-labelled tap (own caption carries the slot) is not also anchored to a near template', () => {
+  // Real device recordings attach row-sibling context (rating, delivery time) to every tap, including one whose own
+  // caption already varies with the slot. Templating `near` from that same context ("{{restaurant}} Pizza") forces
+  // an exact-text row match on replay that only the ORIGINAL restaurant's label can ever satisfy: a different
+  // restaurant's card ("Zulu's Pizza - Fresh Fanatics") never equals the resolved template, so the row lookup comes
+  // back empty and the substring-contains fallback (which would have found it) never runs.
+  const tap = (selector, extra = {}) => ({ type: 'tap', selector, ...extra });
+  const f = generalise({
+    command: "Order a Margherita pizza from Domino's on Zomato",
+    intentKey: 'order_food',
+    slots: { restaurant: "Domino's" },
+    steps: [
+      { type: 'launch', value: 'com.application.zomato' },
+      { type: 'type', selector: { resourceId: 'z:id/edittext' }, value: 'dominos' },
+      tap({ text: "Domino's Pizza" }, { context: ["Domino's Pizza", '4.5 (5.8K+)', '30-35 mins'] }),
+    ],
+  });
+  const [, , card] = f.steps;
+  assert.equal(card.selector.text, "{{restaurant}} Pizza");
+  assert.ok(!card.selector.near, 'own-caption slot must not also be templated into near');
+  assert.equal(card.slotRef, 'restaurant');
+});
+
 test('non-ordering flows get no implied slots', () => {
   const f = generalise({ command: 'open bluetooth settings', intentKey: 'open_settings', slots: { page: 'Bluetooth' },
     steps: [{ type: 'launch', value: 'com.android.settings' }, { type: 'tap', selector: { text: 'Bluetooth' } }] });

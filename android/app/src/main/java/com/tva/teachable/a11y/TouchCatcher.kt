@@ -77,6 +77,7 @@ class TouchCatcher(
     }
 
     private var lastDelivered = Triple(-1f, -1f, 0L)
+    private var dispatchToken = 0
     private fun isEcho(x: Float, y: Float, t: Long) =
         hypot(x - lastDelivered.first, y - lastDelivered.second) < slop && t - lastDelivered.third < ECHO_MS
 
@@ -92,11 +93,18 @@ class TouchCatcher(
         val start = RectF().also { path.computeBounds(it, true) }
         lastDelivered = Triple(start.left, start.top, android.os.SystemClock.uptimeMillis())
         val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)).build()
+        val token = ++dispatchToken
+        // onCompleted/onCancelled is how the view is normally made touchable again; on some OEM ROMs the callback
+        // can simply never fire (observed on this device), which would leave the overlay swallowing every touch
+        // for the rest of the teach session with no further taps ever recorded. The token guards against this
+        // fallback firing after a LATER dispatch already restored/changed touchability.
+        fun restore() { if (token == dispatchToken) setTouchable(v, true) }
         val back = object : AccessibilityService.GestureResultCallback() {
-            override fun onCompleted(d: GestureDescription) { setTouchable(v, true) }
-            override fun onCancelled(d: GestureDescription) { Log.w("TVA", "teach: gesture cancelled"); setTouchable(v, true) }
+            override fun onCompleted(d: GestureDescription) = restore()
+            override fun onCancelled(d: GestureDescription) { Log.w("TVA", "teach: gesture cancelled"); restore() }
         }
-        if (!service.dispatchGesture(g, back, main)) { Log.w("TVA", "teach: gesture not dispatched"); setTouchable(v, true) }
+        if (!service.dispatchGesture(g, back, main)) { Log.w("TVA", "teach: gesture not dispatched"); restore() }
+        main.postDelayed(::restore, CALLBACK_TIMEOUT_MS)
     }
 
     private fun setTouchable(v: View, on: Boolean) {
@@ -111,5 +119,6 @@ class TouchCatcher(
         const val MAX_MS = 3000L
         const val SETTLE_MS = 80L
         const val ECHO_MS = 800L
+        const val CALLBACK_TIMEOUT_MS = 1200L
     }
 }
