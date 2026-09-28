@@ -104,18 +104,18 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
             combine(AppState.status, AppState.teaching, AppState.confirmPrompt, AppState.listen) { s, t, c, l -> arrayOf(s, t, c, l) }
                 .collect { (s, t, c, l) ->
                     val teaching = t == true
-                    status.text = (if (teaching) "● TEACH MODE\n" else "") + s
+                    status.text = if (teaching) "● TEACH MODE" else "$s"
+                    mic.visibility = if (teaching) View.GONE else View.VISIBLE
                     done.visibility = if (teaching) View.VISIBLE else View.GONE
                     confirmRow.visibility = if (c != null) View.VISIBLE else View.GONE
                     panelBg.setColor(if (teaching) TEACH_PANEL else IDLE_PANEL)
                     panelBg.setStroke(if (teaching) (2 * dp).toInt() else 0, TEACH_RING)
                     renderMic(mic, l as ListenMode, teaching)
-                    // The panel's normal resting spot (~62% down, edge-hugging) sits right over the primary action
-                    // buttons most apps place near the bottom (cart bar, confirm sheets): a demo's taps can land on
-                    // the panel instead of the app underneath, and Recorder never sees them. Dock to a thin strip
-                    // just under the status bar while teaching, then restore the user's own dragged position after.
-                    if (teaching && !wasTeaching) move(lp.x, (12 * dp).toInt())
-                    else if (!teaching && wasTeaching) move(lp.x, prefs.getInt(KEY_Y, (screen().second * 0.62f).toInt()))
+                    // While teaching the panel shrinks to a label + Done and parks on the left edge, mid-screen: apps
+                    // put their search, ADD and cart controls along the top, right and bottom, and a demo tap that
+                    // lands on the panel never reaches the app (or the Recorder). Restore the user's spot after.
+                    if (teaching && !wasTeaching) move(0, (screen().second * 0.55f).toInt())
+                    else if (!teaching && wasTeaching) move(prefs.getInt(KEY_X, screen().first), prefs.getInt(KEY_Y, (screen().second * 0.62f).toInt()))
                     wasTeaching = teaching
                 }
         }

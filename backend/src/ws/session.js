@@ -10,9 +10,11 @@ import { generalise, IMPLIED_SLOTS } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
 import { parseOpenApp, resolveApp } from '../services/openApp.js';
 import { HANDOVER_KINDS, handoverLine } from '../services/handover.js';
+import { isStatusQuery, statusLine } from '../services/runStatus.js';
 
 /** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
-const TEACH_PROMPT = 'Do whatever you want to do on the screen so I can learn from it.';
+const TEACH_PROMPT = "I haven't learned that yet. Show me once: do it on the screen, then say done.";
+const CANCEL = /^\s*(cancel|never ?mind|forget it|no)\b/i;
 const DONE = /^\s*(done|i'?m done|finished|that'?s it|stop teaching)\b/i;
 
 const teachDone = z.object({
@@ -35,7 +37,7 @@ const runResult = z.object({
 
 /** One phone connection: audio -> STT -> intent/match -> replay | teach; teach_done -> generalise -> save. */
 export class Session {
-  constructor(socket) { this.socket = socket; this.stt = null; this.sttMode = 'command'; this.teaching = null; this.apps = []; }
+  constructor(socket) { this.socket = socket; this.stt = null; this.sttMode = 'command'; this.teaching = null; this.apps = []; this.pending = null; }
 
   send(obj) { if (this.socket.readyState === 1) this.socket.send(JSON.stringify(obj)); }
 
@@ -91,6 +93,12 @@ export class Session {
     if (this.teaching) {
       return DONE.test(text) ? this.send({ type: 'teach_finish' }) : this.say("I'm still watching. Say done when you have finished.");
     }
+    if (isStatusQuery(text)) return this.#reportLastRun();
+    if (this.pending) {
+      const { flow, slots, slot } = this.pending; this.pending = null;
+      if (CANCEL.test(text)) return this.say('Okay, I cancelled that.');
+      return this.#replay(flow, text, { ...slots, [slot]: text.trim() });
+    }
     const app = resolveApp(parseOpenApp(text), this.apps);
     if (app) {
       this.send({ type: 'launch_app', package: app.package, label: app.label });
@@ -100,9 +108,12 @@ export class Session {
     const m = flows.length ? await matchFlow(text, flows) : { ...(await extractIntent(text)), flowId: null };
     if (m.flowId) {
       const flow = flows.find((f) => String(f._id) === m.flowId);
-      const slots = withDefaults(normaliseSlots(m.slots), flow.slots, IMPLIED_SLOTS.map((s) => s.name));
-      this.send({ type: 'replay', flowId: m.flowId, utterance: text, flow, slots });
-      return this.say('Okay, doing that now.');
+      const slots = normaliseSlots(m.slots);
+      if (m.clarify) { // T13: never silently pick for the user
+        this.pending = { flow, slots, slot: m.clarify.slot };
+        return this.say(m.clarify.question);
+      }
+      return this.#replay(flow, text, slots);
     }
     // No flow matched although some exist: for an eval set of paraphrases that is a miss, and the metric would
     // flatter itself if only matched-and-replayed runs were ever counted. (A genuinely new task lands here too.)
@@ -113,6 +124,18 @@ export class Session {
     this.teaching = { command: text, intentKey: intent.intentKey, slots: intent.slots ?? {} };
     this.send({ type: 'teach_start', ...this.teaching });
     return this.say(TEACH_PROMPT);
+  }
+
+  #replay(flow, utterance, given) {
+    const slots = withDefaults(given, flow.slots, IMPLIED_SLOTS.map((s) => s.name));
+    this.send({ type: 'replay', flowId: String(flow._id), utterance, flow, slots });
+    return this.say('Okay, doing that now.');
+  }
+
+  async #reportLastRun() {
+    const run = await RunLog.findOne({ kind: 'replay' }).sort({ createdAt: -1 }).lean();
+    const flow = run?.flowId ? await Flow.findById(run.flowId).lean() : null;
+    return this.say(statusLine(run, flow));
   }
 
   async #learn(body) {
