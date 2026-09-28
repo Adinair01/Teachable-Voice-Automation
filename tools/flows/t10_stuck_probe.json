@@ -1,0 +1,3 @@
+{"intentKey":"t10_stuck_probe","description":"probe: tap a control that does not exist on the screen","appPackage":"com.tva.teachable",
+ "steps":[{"type":"launch","selector":{},"slotRef":null,"value":"com.tva.teachable","sensitive":false,"expect":{}},
+          {"type":"tap","selector":{"text":"Add item"},"slotRef":null,"value":"","sensitive":false,"expect":{}}]}

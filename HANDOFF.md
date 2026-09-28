@@ -404,6 +404,15 @@ Consequence: Work is already Zomato's selected address, so a "deliver to work" r
 this account has no second deliverable address, so the picker's switching path (choose_address opening the sheet and
 tapping a saved label) is CODED, NOT verified. T6-work has since been run (see above).
 
+- **T10 stuck handling** (Replayer.stuck + core/ScreenSummary): a step whose target never shows now ends with ONE specific
+  question naming the missing control and up to 4 short labels the screen shows (password/input fields, long digit runs and
+  long strings are dropped so no PII is spoken or stored); a screen of another app says "I'm not in the app any more ...
+  take me back?"; LLM picks are capped at 2 per run; the run stops at the first failed step (no loops), worst case ~15 s
+  per step. VERIFIED on the phone with tools/flows/t10_stuck_probe.json (launch our own app, tap a control that does not
+  exist): ~12 s, spoken-line text "I can't find "Add item". This screen shows "2. START VOICE ASSISTANT", "SAVE BACKEND
+  URL", ...  What should I do?", no tap made (llm:false). Wrong-app wording, the pick cap and PII filtering are unit-tested
+  only (Kotlin: 50 tests pass, 4 new in ReplayerStuckTest). Not tested: a real logged-out/foreign-language Zomato.
+
 CODED, not run on the phone: T12 ("Book a cab" -> matcher returns no flow; reply is now "I haven't learned that yet. Show
 me once: do it on the screen, then say done." and teach mode opens; there is no cancel once teach mode is open), the T13
 follow-up reply path, T10, T7 beyond the upsell-interstitial skip. NOT STARTED: T8/T9 (no second app taught), Tier 3.

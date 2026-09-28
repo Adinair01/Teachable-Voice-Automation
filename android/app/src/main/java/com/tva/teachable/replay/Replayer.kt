@@ -6,6 +6,7 @@ import com.tva.teachable.core.BoundaryKind
 import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
 import com.tva.teachable.core.ScreenGuard
+import com.tva.teachable.core.ScreenSummary
 import com.tva.teachable.core.Selector
 import com.tva.teachable.core.SelectorMatcher
 import com.tva.teachable.core.StepType
@@ -46,7 +47,11 @@ class Replayer(
     private val gate: ConfirmationGate = DenyAll,
     private val cfg: ReplayConfig = ReplayConfig(),
 ) {
+    private var appPackage = ""
+    private var llmPicks = 0
+
     suspend fun run(flow: Flow, slots: Map<String, String>): RunResult {
+        appPackage = flow.appPackage; llmPicks = 0
         val results = ArrayList<StepResult>()
         for ((i, step) in flow.steps.withIndex()) {
             val r = runStep(i, step, flow.steps.getOrNull(i + 1), slots)
@@ -105,15 +110,17 @@ class Replayer(
             repeat(cfg.scrollTries) {
                 if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, probe)
             }
-            if (found == null) return StepResult(i, false, error = "couldn't find \"${sel.near}\" on the screen")
+            if (found == null) return StepResult(i, false, error = stuck("\"${sel.near}\""))
         }
         if (found == null) found = poll(cfg.retryMs, probe) // retry once
-        if (found == null && picker != null) { // LLM fallback: also how unexpected popups get dismissed/bypassed
+        // LLM fallback: also how unexpected popups get dismissed/bypassed. Capped per run so a screen that keeps
+        // changing under the assistant ends in a question instead of a string of guesses.
+        if (found == null && picker != null && llmPicks < MAX_LLM_PICKS) {
             val tree = device.tree()
             val idx = picker.pick(step, slots, tree.nodes)
-            tree.nodes.getOrNull(idx ?: -1)?.let { found = tree to it; fallback = true }
+            tree.nodes.getOrNull(idx ?: -1)?.let { found = tree to it; fallback = true; llmPicks++ }
         }
-        val (tree, node) = found ?: return StepResult(i, false, error = "target not found")
+        val (tree, node) = found ?: return StepResult(i, false, error = stuck(targetLabel(step, sel)))
         if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
         val before = signature(tree)
         val acted = if (isTap) device.tap(tree, node) else typeAndVerify(tree, node, sel, value)
@@ -215,6 +222,22 @@ class Replayer(
         return StepResult(i, false, error = "the app didn't switch to your \"$label\" address, it may be outside the delivery area")
     }
 
+    private fun targetLabel(step: FlowStep, sel: Selector): String =
+        (sel.text.ifBlank { sel.contentDesc }.ifBlank { step.selector.resourceId.substringAfterLast('/') }).let { if (it.isBlank()) "the next control" else "\"$it\"" }
+
+    /**
+     * Nothing to tap and nothing safe to guess: say what is missing and what the screen shows, as a question. A screen
+     * of another app means the run was thrown out of the app (or never got in), which is worth saying differently.
+     */
+    private fun stuck(what: String): String {
+        val nodes = device.tree().nodes
+        val pkg = nodes.firstOrNull()?.packageName.orEmpty()
+        if (appPackage.isNotEmpty() && pkg.isNotEmpty() && pkg != appPackage) {
+            return "I'm not in the app any more, this screen belongs to ${pkg.substringAfterLast('.')}. Can you take me back to it so I can continue?"
+        }
+        return "I can't find $what. This screen shows ${ScreenSummary.of(nodes)}. What should I do?"
+    }
+
     private fun resolved(sel: Selector, slots: Map<String, String>) = sel.copy(
         // Selector text may hold slot tokens ("{{query}} near me"); resolved against the CURRENT slot values.
         text = resolveSlots(sel.text, slots),
@@ -252,6 +275,7 @@ class Replayer(
 
     private companion object {
         const val MAX_QTY = 20
+        const val MAX_LLM_PICKS = 2
         const val TYPE_TRIES = 3
         const val QUIET_MS = 600L
         val SLOT_TOKEN = Regex("\\{\\{(\\w+)\\}\\}")
