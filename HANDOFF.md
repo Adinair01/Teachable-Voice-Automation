@@ -373,16 +373,51 @@ STATUS TABLE (separated per the session rule):
 - TouchCatcher touchability-timeout fix: CODED, NOT device-verified.
 - Failed-learn diagnostic logging: CODED, working as observed (produced the logs quoted above).
 
+## Session 2026-09-28 (later) — live results on the real phone (Realme, Zomato, Domino's, Work address)
+Rule kept: VERIFIED = watched live this session. CODED = unit/matcher tested only.
+
+VERIFIED live:
+- Recording fix: a typed trigger + two real taps in Settings + "done" -> backend log shows launch + both taps (the
+  TouchCatcher 1200 ms fallback works; last session only the first tap was ever captured).
+- **T1**: typed "Order a Margherita pizza from Domino's on Zomato", demonstrated from a cold-started Zomato (search
+  Dominos -> restaurant -> in-restaurant search Margherita -> ADD -> "Add item" -> Continue to cart, stopped there),
+  phone said "Learned", flow saved with 12 steps and slots item/restaurant/quantity/address. HAND EDIT: one stray demo
+  step (my mistaken tap on an upsell item, resource `recommend_root_layout`) was deleted from Mongo afterwards.
+- **T2** exact replay: from an empty cart, unattended, cold start -> cart with Margherita x1 (Rs114), overlay "Your turn",
+  RunLog success + handover payment, 12/12 steps, no LLM fallback, ~1 min. Place Order never touched.
+- **T4** "Order a Farmhouse pizza ..." -> cart holds Farmhouse Pizza (not Margherita), 12/12, handover payment.
+- **T5** "Order two Margherita pizzas ..." -> cart row stepper = 2, Rs228, 12/12, handover payment.
+- T11 payment boundary re-observed at the real cart each run (handover, no tap past the cart). Login/OTP still unit-only.
+- **T13** typed "Order pizza" -> "Which pizza?" (nothing tapped); "never mind" -> "Okay, I cancelled that." (read from the
+  app's live log; audio not heard). The follow-up answer path ("margherita" -> replay) is NOT yet run live.
+- **T14 fail case** typed "Did the last run succeed?" after a real failure -> "No. The last run of ... stopped at step 12,
+  choosing the delivery address: the app didn't switch to your "home" address, it may be outside the delivery area."
+  T14 PASS case not yet run.
+
+LEGITIMATE FAILURE, NOT A BUG — T6 home: "... and deliver to home" stopped at step 12 (choose_address) with a specific
+reason. The address sheet (read-only look, nothing selected) shows Work under DELIVERS TO and Home (939 km) + Hotel
+(275 km) under DOES NOT DELIVER TO, so Domino's cannot deliver to Home from this account. Do NOT force Home to work.
+Consequence: Work is already Zomato's selected address, so a "deliver to work" run passes without switching anything;
+this account has no second deliverable address, so the picker's switching path (choose_address opening the sheet and
+tapping a saved label) is CODED, NOT verified. T6-work run is still to do (weak test on this account).
+
+CODED, not run on the phone: T12 ("Book a cab" -> matcher returns no flow; reply is now "I haven't learned that yet. Show
+me once: do it on the screen, then say done." and teach mode opens; there is no cancel once teach mode is open), the T13
+follow-up reply path, T10, T7 beyond the upsell-interstitial skip. NOT STARTED: T8/T9 (no second app taught), Tier 3.
+
+Also done this session: compact teach panel (label + Done only, parked mid-left, mic hidden while teaching) because the
+old panel covered Zomato's in-restaurant Search; new services/runStatus.js + tests; matchFlow now returns `clarify` for
+a generic item; 27 backend tests pass. Commits: 506b231, 244298b.
+Gotchas: `adb shell input tap` on anything that removes/changes cart contents is denied by the auto-mode classifier —
+the USER empties the cart between runs. Groq free tier 429s on bursts (sleep between matcher calls).
+
 ## Next steps (immediate, in order)
-1. Get the phone reliably charging/charged and back on adb before anything else.
-2. Redo the exact minimal test from this session — typed "turn on wifi" (or similar) trigger, ONE physical tap in the
-   real Settings app, typed "done" — and confirm via `docker compose logs backend` that `steps` now contains more
-   than just the launch entry. This is the one thing that must be seen before trusting any further teach attempt.
-3. Once recording is confirmed reliable: fresh live T1 ("Order a Margherita pizza from Domino's on Zomato", stop
-   before payment, confirm "Learned: ..."), then T2-T6 in order, then Tier 2 (T7, T10, T12, T13, T14).
-4. Re-verify generalise.js fix (#1 above) live if time allows — swap restaurants against a taught flow.
-5. Git history rewrite (purge old committed keys, commit 49d20eb) — planned for after T1-T6 are solid, not started.
-6. Repo push + tag: still explicitly WAITING for Aditya's go-ahead.
+1. T6-work (user empties cart first), then T14 pass case, then T13 follow-up ("margherita") live.
+2. Go/no-go on T7, T10, T8/T9 (see the assessment given to the user this session).
+3. Deliverables: unedited scrcpy recording in the required order, README/deck (5 named architecture parts, target apps,
+   limitations incl. Zomato findings and the address-sheet finding), fresh secrets scan of history (49d20eb is no longer in
+   the repo; the earlier rewrite + key rotation is recorded above; re-scan before any push).
+4. Repo push + tag: WAIT for the user's explicit go-ahead. CLAUDE.md deadline line still says 25 Sep — real deadline 30 Sep.
 
 ## Open items
 - Live demo-video recording session with Aditya (blocks final video + possibly deck slide 7 photos).
