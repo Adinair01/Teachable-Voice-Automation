@@ -502,10 +502,18 @@ T7 RE-VERIFICATION (Aditya cleared order replays + said cart was empty):
   in your cart, 1 of it. Should I add another one, or leave it as it is?" — it did NOT add a duplicate or a look-alike, did
   NOT report false success, did NOT loop. This is a Replayer-side stop (RunLog kind=replay success=false; no hanging pending
   to answer). **T7 fix #3 (contentDesc stepper) also confirmed** — it read the cart count "1 of it" correctly.
-- **T7 fix #2 (empty-cart happy-path regression / false-success gate) NOT yet verified** — because the cart was NOT actually
-  empty: after cold-restarting Zomato the cart screen said "2 items added" (a leftover Margherita x1 + another pizza from a
-  prior session; my run added nothing, it stopped at the add step). Needs the cart genuinely emptied, then a clean T2 run to
-  confirm the new end-of-run cart-evidence gate still reports a real success.
+- **T7 fix #2 (empty-cart happy-path regression / false-success gate) — in progress.** First empty-cart attempt exposed a
+  NEW real bug (below); fixed; needs one more empty cart to confirm the full happy path reaches payment.
+- **NEW BUG FOUND + FIXED (commit ca5f7ae): post-add upsell hid the quantity stepper.** From a truly empty cart the exact
+  replay added the Margherita fine (10/12) but stopped at step 11 (set_quantity) with "couldn't find the quantity control
+  for Margherita pizza" — Zomato had dropped an "Add items worth ₹85 or more… Continue" upsell ON TOP of the cart, hiding
+  the stepper. (This upsell is non-deterministic — last session it didn't appear here, so T2 passed 12/12 then.) Confirmed
+  by hand: `check` said the Continue button is ScreenGuard-"allowed"; tapping it revealed the cart with the Margherita
+  stepper (count 1). Fix: `Replayer.passInterstitial()` taps a benign Continue/Skip/Got-it control (regex `INTERSTITIAL`)
+  ONLY when ScreenGuard clears it (so a real "Continue to pay" is still handed over), bounded to 2 passes; wired into
+  `quantity()` and `choose_address()` before they give up. Kotlin tests: ReplayerSlotsTest 6→8 (upsell-hides-stepper,
+  upsell-hides-address-header), all pass; APK rebuilt+reinstalled. **NOT yet re-verified live end-to-end** — the earlier
+  run left Margherita x1 in the cart again (steps 1-10 incl. ADD ran before it failed), so a fresh empty cart is needed.
 - **ENV FINDING (matters for the judged run): device location must be ON.** It was off (location_mode=0) at session start, so
   Zomato cold-started onto a "Device location not enabled / Select a saved address" interstitial and the flow stopped at
   step 2 unable to find the search bar — the assistant asked a correct specific question ("I can't find \"Search…\". This
