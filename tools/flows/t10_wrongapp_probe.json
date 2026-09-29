@@ -1,0 +1,2 @@
+{"intentKey":"t10_wrongapp_probe","description":"probe: flow's app is Zomato but no launch step; run while parked on another app to trigger the not-in-the-app-any-more path","appPackage":"com.application.zomato",
+ "steps":[{"type":"tap","selector":{"text":"Search in Domino's Pizza"},"slotRef":null,"value":"","sensitive":false,"expect":{}}]}

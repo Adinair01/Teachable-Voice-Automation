@@ -462,7 +462,37 @@ line was corrected to 30 Sep this session.
    before any push).
 5. Repo push + tag `PRISM_GENAI_HACKATHON_Y2026`: WAIT for the user's explicit go-ahead.
 
-## Open items
+## Session 2026-09-29 (live) — full-autonomy pass, ~31h to deadline. VERIFIED = watched live on the phone this session.
+Setup this session: phone back on adb (battery 63% and actually charging), backend+mongo containers healthy, `adb reverse
+tcp:3100 tcp:3100` re-set (app URL is http://localhost:3100, so it rides the USB tunnel — survives even airplane mode).
+VoiceService was NOT running on connect (only the a11y service was) → started it by tapping our own `startVoice` button via
+the debug channel (NOTE: debug `tap`/`check` match resourceId/text EXACTLY, so pass the FULL id
+`com.tva.teachable:id/startVoice`, not the short name). WS then connected. Live harness for this session: send commands with
+`adb shell am broadcast -a com.tva.DEBUG --es cmd say --es text '<utterance>'` (same pipeline as speech), read the spoken
+reply from `adb logcat -s TVA:I | grep assistant`.
+
+VERIFIED live this session:
+- **T12** (unknown intent): typed "Book a cab" → "I haven't learned that yet. Show me once: do it on the screen, then say
+  done." and teach mode opened (never forced into a flow). Backend logged the expected `learn failed` (slots item=cab,
+  actionable 0) when the empty demo was ended. **UX GAP FOUND:** saying "done" with no recorded steps does NOT cleanly cancel
+  teach mode — it replies "I couldn't find "cab" in what you did. Let's try again." and stays in teach mode. The only exit is
+  a WS reconnect (verified: tapping SAVE BACKEND URL forces stopService+restart → teach state cleared). A judge who says
+  "Book a cab" and then declines to teach is stuck in teach mode. Candidate quick fix + limitation note.
+- **T10 real wrong-app trigger** (new `tools/flows/t10_wrongapp_probe.json`: appPackage=Zomato, single tap step, NO launch
+  step): parked on Settings, ran it → step 0 ok=false, **llm=false (nothing tapped)**, err = "I'm not in the app any more,
+  this screen belongs to settings. Can you take me back to it so I can continue?", ~11s (< the 30s bar), no loop. A genuine
+  foreground-mismatch trigger, stronger than last session's synthetic missing-control probe (which stays valid too).
+
+STILL BLOCKED ON ADITYA (physical / real-account, per standing rules):
+- **Priority 1 — T7 re-verification (the 3 coded-but-unverified fixes):** needs (a) the cart emptied (last session left a
+  stray Double Cheese Margherita + Margherita x1 on a "Dishes loved by friends" sheet) and (b) explicit clearance to run
+  order replays that add to cart (memory: ask-before-ordering). Once cleared: plain T2 from empty cart (regression on the new
+  stricter end-of-run + LLM-plausibility gates) → then stage Margherita x1 and re-order Margherita → expect "…already in your
+  cart, N of it. Add another, or leave it as it is?", nothing added.
+- **Priority 3 extra — airplane-mode network-stuck T10:** would also need order-replay clearance; the wrong-app trigger above
+  already gives a strong real T10, so this is optional.
+
+
 - Live demo-video recording session with Aditya (blocks final video + possibly deck slide 7 photos).
 - GitHub repo URL — Aditya has not created it / not shared it yet; no remote configured in this repo.
 - `CLAUDE.md` filename still contains "CLAUDE" — flagged to Aditya, no decision yet on renaming.
