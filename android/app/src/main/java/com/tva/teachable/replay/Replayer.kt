@@ -193,15 +193,34 @@ class Replayer(
         SelectorMatcher.target(t.nodes, sel, slotValue, type == StepType.TAP)?.let { t to it }
     }
 
+    /**
+     * Passes a benign upsell/interstitial ("Continue", "Skip", "Got it", …) that Zomato can drop on top of the cart
+     * after an item is added, hiding the quantity stepper and the address header. Only taps a control ScreenGuard
+     * clears, so it can never advance a purchase (a real "Continue to pay" is handed over instead). Returns true if it
+     * tapped something and the screen changed.
+     */
+    private suspend fun passInterstitial(): Boolean {
+        val t = device.tree()
+        val node = t.nodes.firstOrNull { n ->
+            n.clickable && INTERSTITIAL.matches((n.text.ifBlank { n.contentDesc }).trim()) && ScreenGuard.action(t.nodes, n) == null
+        } ?: return false
+        val before = signature(t)
+        device.tap(t, node)
+        return poll(cfg.settleMs) { tt -> tt.takeIf { signature(it) != before } } != null
+    }
+
     /** Taps "+" / "−" beside the item until the count reads [want]; each tap is re-read, never assumed. */
     private suspend fun quantity(i: Int, step: FlowStep, slots: Map<String, String>, want: String): StepResult {
         val n = want.toIntOrNull()?.takeIf { it in 1..MAX_QTY } ?: return StepResult(i, false, error = "quantity \"$want\" is not a number I can set")
         val near = resolveSlots(step.selector.near, slots)
         val item = SLOT_TOKEN.find(step.selector.near)?.groupValues?.get(1)?.let { slots[it] }
         var last = -1
+        var upsells = 0
+        // Tree and stepper from the SAME read: a node is only tappable through the tree it was found in.
+        suspend fun findStepper() = poll(cfg.waitMs) { tt -> Steppers.find(tt.nodes, near, item)?.let { tt to it } }
         repeat(MAX_QTY + 2) {
-            // Tree and stepper from the SAME read: a node is only tappable through the tree it was found in.
-            val (t, s) = poll(cfg.waitMs) { tt -> Steppers.find(tt.nodes, near, item)?.let { tt to it } }
+            val (t, s) = findStepper()
+                ?: (if (upsells < 2 && passInterstitial()) { upsells++; findStepper() } else null)
                 ?: return StepResult(i, false, error = "couldn't find the quantity control for ${item ?: "the item"}")
             if (s.count == n) return StepResult(i, true)
             if (s.count == last) return StepResult(i, false, error = "the quantity stayed at ${s.count}")
@@ -221,7 +240,9 @@ class Replayer(
         val isChosen = { t: LiveTree -> t.nodes.any { !it.editable && chosen.containsMatchIn(it.text + " " + it.contentDesc) } }
         if (isChosen(device.tree())) return StepResult(i, true)
 
-        val opener = poll(cfg.waitMs) { t -> t.nodes.firstOrNull { ADDRESS_HEADER.containsMatchIn(it.text + " " + it.contentDesc) }?.let { t to it } }
+        suspend fun findOpener() = poll(cfg.waitMs) { t -> t.nodes.firstOrNull { ADDRESS_HEADER.containsMatchIn(it.text + " " + it.contentDesc) }?.let { t to it } }
+        val opener = findOpener()
+            ?: (if (passInterstitial()) findOpener() else null)
             ?: return StepResult(i, false, error = "couldn't find where to change the delivery address")
         device.tap(opener.first, opener.second)
 
@@ -320,6 +341,9 @@ class Replayer(
         const val MAX_QTY = 20
         const val MAX_LLM_PICKS = 2
         val DISMISS = Regex("^(close|skip|not now|maybe later|no thanks|got it|ok|okay|allow|cancel|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
+        // Benign pass-through controls an upsell/interstitial can sit behind, on top of the cart ("Add items worth ₹X…
+        // Continue"). Only ever tapped when ScreenGuard clears it, so a genuine "Continue to pay" is still handed over.
+        val INTERSTITIAL = Regex("^(continue|proceed|close|skip|not now|maybe later|no thanks|got it|ok|okay|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
         // Words a cart or checkout screen shows even when a popup hides its pay bar.
         val CART_EVIDENCE = Regex("pay using|place order|bill details|to pay|grand total|item total", RegexOption.IGNORE_CASE)
         const val TYPE_TRIES = 3

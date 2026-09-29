@@ -16,11 +16,14 @@ class ReplayerSlotsTest {
     /** A cart-like screen whose stepper and delivery header really change when tapped. */
     private class Cart(
         var qty: Int = 1, var address: String = "Home", val labels: List<String> = listOf("Home", "Work"),
-        val outOfRange: Set<String> = emptySet(),
+        val outOfRange: Set<String> = emptySet(), var upsell: Boolean = false,
     ) : Device {
         var pickerOpen = false
         val tapped = mutableListOf<String>()
-        private fun screen(): List<Triple<Int, String, Boolean>> = if (pickerOpen)
+        private fun screen(): List<Triple<Int, String, Boolean>> = if (upsell)
+            // An "Add items worth ₹X… Continue" sheet Zomato can drop on top of the cart, hiding the stepper/header.
+            listOf(Triple(0, "", false), Triple(1, "Add items worth ₹85 or more to", false), Triple(1, "Continue", true))
+        else if (pickerOpen)
             listOf(Triple(0, "", false), Triple(1, "Select an address", false)) + labels.map { Triple(1, it, true) }
         else listOf(
             Triple(0, "", false), Triple(1, "25-30 mins to $address", true),
@@ -34,6 +37,7 @@ class ReplayerSlotsTest {
         override fun tap(tree: LiveTree, node: UiNode): Boolean {
             tapped += node.text
             when {
+                node.text == "Continue" -> upsell = false
                 node.text == "+" -> qty++
                 node.text == "−" -> qty--
                 node.text.startsWith("25-30") -> pickerOpen = true
@@ -86,6 +90,21 @@ class ReplayerSlotsTest {
         assertEquals("the app didn't switch to your \"home\" address, it may be outside the delivery area", r.steps.last().error)
         assertEquals("Work", d.address)
         assertTrue(!d.pickerOpen)
+    }
+
+    @Test fun quantityPassesAnUpsellHidingTheStepper() = runBlocking {
+        val d = Cart(upsell = true)
+        val r = Replayer(d, cfg = fast).run(flow(qtyStep), mapOf("item" to "Margherita", "quantity" to "2"))
+        assertTrue(r.steps.toString(), r.steps.all { it.ok })
+        assertEquals(2, d.qty)
+        assertTrue("should have passed the Continue upsell", d.tapped.contains("Continue"))
+    }
+
+    @Test fun addressPassesAnUpsellHidingTheHeader() = runBlocking {
+        val d = Cart(upsell = true)
+        val r = Replayer(d, cfg = fast).run(flow(addrStep), mapOf("address" to "work"))
+        assertTrue(r.steps.toString(), r.steps.all { it.ok })
+        assertEquals("Work", d.address)
     }
 
     @Test fun interstitialFromTheDemoIsSkippedWhenNotShown() = runBlocking {
