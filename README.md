@@ -44,6 +44,18 @@ and — if the selector still misses — sends a compact UI dump to the LLM to p
 unexpected popups). **Anything sensitive** (pay / send / order / delete / submit …) pauses and asks for a spoken or
 tapped "yes" first. It never auto-fills or auto-submits a login or payment screen.
 
+### The five parts
+
+1. **Speech-to-intent** — Deepgram Nova 3 turns speech into text; Groq (JSON mode) extracts the intent and its slots.
+2. **UI-tree capture** — the AccessibilityService reads the live UI tree (resource-id, text, content-description, class,
+   bounds, clickable) of whatever app is in front, with no cooperation from that app.
+3. **Generalisation** — one demonstration becomes a parameterised flow: selectors + actions, with the values you spoke
+   turned into slots (`{{item}}`, `{{quantity}}`, `{{address}}`).
+4. **Slot extraction** — on a replay command, Groq matches it to the right saved flow (paraphrase-tolerant) and pulls the
+   new slot values out of the spoken words; slots you did not mention fall back to the taught example.
+5. **Replay** — each step runs against the live UI tree (find by selector → wait → verify), row-anchored where a control
+   repeats, with the LLM element-picker as a fallback and a hard stop at any payment / OTP / login screen.
+
 ---
 
 ## Repository layout
@@ -197,13 +209,49 @@ tools/replay.sh chrome_search '{"query":"pizza"}'    # replay a hand-written flo
 - The Docker image runs as a non-root user.
 - Cleartext HTTP is enabled **for local development only** (`adb reverse` / LAN). A shipped build would be TLS.
 
+## Target apps
+
+Nothing is hard-coded per app. The recorder and replayer only ever know *selectors and actions*; the app-specific
+behaviour below (row anchoring, quantity stepper, address picker, payment boundary) is generic UI-pattern handling, not
+a per-app script. A judge can teach a brand-new flow on any of these — or another app entirely — live.
+
+- **Zomato** (`com.application.zomato`) — **primary**. Food ordering end to end, taught once by demonstration:
+  search a restaurant → open it → search a dish → add it → adjust quantity → choose a saved delivery address → stop at
+  the payment screen and hand control back. Item / quantity / restaurant / address are slots, so the same taught flow
+  replays "a Farmhouse pizza", "two Margheritas", "deliver to work", etc. Requires `android:isAccessibilityTool="true"`
+  to see Zomato's commit buttons (see limitations).
+- **Settings, Clock, Calculator** (system apps) — **secondary**, as generalisation proof: the identical
+  teach → generalise → replay pipeline also learns non-food flows (open a Settings page, switch a Clock tab, run an
+  arithmetic calculation) with slot substitution ("open Bluetooth settings" → "open the Wi-Fi settings", "calculate 5
+  plus 3" → "what is 9 plus 4").
+
 ## Known limitations
 
+- **Zomato hides its commit buttons from ordinary accessibility services.** On Android 14+, "Add item ₹X", checkout and
+  "Place Order" carry `accessibilityDataSensitive` and are invisible unless the service declares
+  `android:isAccessibilityTool="true"`, which we set. Without it neither the recorder nor the payment ScreenGuard can
+  see those buttons. Google Play restricts that flag to genuine accessibility tools; an OEM system service — our
+  production shape — qualifies.
+- **Delivery range is account- and location-specific.** On the test account Domino's delivers to the saved *Work*
+  address but not *Home* (out of range), so a "deliver to home" run correctly **stops at the address step with a
+  specific reason** rather than forcing an undeliverable address. The address-switcher path only exercises fully when
+  the account has a second deliverable address.
+- **Repeated controls need row anchoring.** Every dish's "ADD" shares the same id/text and Zomato keeps the label in
+  `contentDesc` (empty `text`), so a tap is anchored to the row whose caption names the requested item — never "the
+  first ADD". The quantity stepper likewise reads its count from `contentDesc`. (Bugs found and fixed while testing:
+  adding a look-alike dish instead of the requested one, and reporting success after an LLM fallback tapped an unrelated
+  element — replays now require cart evidence and LLM picks must plausibly relate to the target.)
+- **Some OEMs never fire the gesture-dispatch callback.** On the Realme test device (ColorOS, Android 15) the teach-mode
+  touch-catcher relied on `GestureResultCallback` to restore touchability; this device sometimes never calls it, so only
+  the first tap was recorded. Worked around with a token-guarded 1200 ms timeout that force-restores touchability.
+  Replay is unaffected — it uses `performAction`, not gesture dispatch.
 - **Chrome's omnibox suggestions emit no click event**, so demonstrations inside Chrome's address bar cannot be
-  recorded; Chrome flows in `tools/flows/` are hand-authored. Standard app views (Settings, Clock, Calculator, …)
-  record correctly.
+  recorded; Chrome flows in `tools/flows/` are hand-authored. Standard app views (Zomato, Settings, Clock, Calculator,
+  …) record correctly.
 - Long-press, drag and pinch are not recorded — taps, typing, scrolling and back are.
 - The Groq account used here no longer serves Llama 3.x, so `GROQ_MODEL` defaults to `openai/gpt-oss-20b`
   (any JSON-mode model works). The free tier throttles bursts; calls retry once on 429.
 - A slot the demonstration never used (e.g. "plus" in *calculate 5 plus 3*) is stored but cannot vary the replay.
 - One phone, one backend: the session state lives on the socket, so a reconnect cancels a half-finished teach session.
+- **On-device screen recording is blocked** on the Realme test device (`screenrecord` fails with permission denied on
+  every writable path), so the demo video is captured with `scrcpy` over adb instead.
