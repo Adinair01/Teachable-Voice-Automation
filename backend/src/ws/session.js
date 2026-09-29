@@ -91,7 +91,10 @@ export class Session {
   async handleCommand(text) {
     // Only "done" is meaningful while teaching; anything else would otherwise vanish without a word back.
     if (this.teaching) {
-      return DONE.test(text) ? this.send({ type: 'teach_finish' }) : this.say("I'm still watching. Say done when you have finished.");
+      // A clean voice exit: without this, "cancel"/"never mind" fell through to "I'm still watching" and the only way
+      // out was "done" (which then failed on an empty demo). A judge who declines to teach must be able to back out.
+      if (CANCEL.test(text)) { const cmd = this.teaching.command; this.teaching = null; this.send({ type: 'teach_cancel' }); await this.#logLearn(false, cmd); return this.say("Okay, I've stopped. Nothing was saved."); }
+      return DONE.test(text) ? this.send({ type: 'teach_finish' }) : this.say("I'm still watching. Say done when you have finished, or cancel to stop.");
     }
     if (isStatusQuery(text)) return this.#reportLastRun();
     if (this.pending) {
@@ -151,10 +154,10 @@ export class Session {
       await this.#logLearn(false, body.command);
       this.send({ type: 'teach_failed' }); // lets the phone drop out of "Saving…" instead of hanging there
       return this.say(g.slots.length && !g.slotsFound
-        ? `I couldn't find "${g.slots[0].example}" in what you did. Let's try again.`
+        ? `I couldn't find "${g.slots[0].example}" in what you did, so I haven't saved anything. Say the command again to show me from the start.`
         : actionable === 0 && g.steps.length
           ? "I only saw an app being opened. To open an app, just say open and its name. Teach me a task inside the app instead."
-          : "I didn't see any actions. Let's try again.");
+          : "I didn't see any actions, so there's nothing to save. Say the command again when you want to show me.");
     }
     const { slotsFound, ...doc } = g;
     const flow = await Flow.create(flowInput.parse(doc));

@@ -133,6 +133,7 @@ class VoiceService : Service() {
             "launch_app" -> openApp(m.optString("package"), m.optString("label"))
             "learned" -> { AppState.status.value = "Learned"; AppState.log("learned flow (${m.optInt("steps")} steps)") }
             "teach_failed" -> AppState.status.value = "Idle"
+            "teach_cancel" -> { TvaAccessibilityService.instance?.stopRecording(); teach = null; AppState.teaching.value = false; AppState.status.value = "Idle" }
             "error" -> AppState.log("server error: ${m.optString("error")}")
         }
     }
