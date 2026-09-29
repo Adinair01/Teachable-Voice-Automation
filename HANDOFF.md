@@ -512,8 +512,16 @@ T7 RE-VERIFICATION (Aditya cleared order replays + said cart was empty):
   stepper (count 1). Fix: `Replayer.passInterstitial()` taps a benign Continue/Skip/Got-it control (regex `INTERSTITIAL`)
   ONLY when ScreenGuard clears it (so a real "Continue to pay" is still handed over), bounded to 2 passes; wired into
   `quantity()` and `choose_address()` before they give up. Kotlin tests: ReplayerSlotsTest 6→8 (upsell-hides-stepper,
-  upsell-hides-address-header), all pass; APK rebuilt+reinstalled. **NOT yet re-verified live end-to-end** — the earlier
-  run left Margherita x1 in the cart again (steps 1-10 incl. ADD ran before it failed), so a fresh empty cart is needed.
+  upsell-hides-address-header), all pass; APK rebuilt+reinstalled.
+- **UPSELL FIX + T5 VERIFIED LIVE END-TO-END (fresh empty cart, Aditya's OK, "T5 only").** Ran "Order two Margherita pizzas
+  from Domino's on Zomato": raw RunLog = success:true, handover:payment, **12/12 steps, all clean (no LLM fallback)**. Phone
+  spoke "You're at the payment step. Your turn: I don't touch payments, so please review and pay yourself." set_quantity
+  passed the upsell and stepped to 2 (its contract only returns ok when count==want), reached the "PAY USING" screen, handed
+  over — T11 boundary held. This single run closes T7: fix #1 (no look-alike, verified earlier), fix #2 (false-success gate —
+  success:true only because real cart/payment evidence was reached, subsuming the T2 qty=1 regression), fix #3 (contentDesc
+  stepper), AND the new upsell fix. **T7 = DONE. T5 = DONE (re-confirmed). T11 = re-confirmed live.**
+- LIVE STATE AFTER THIS RUN: cart holds **Margherita x2**, phone parked on the Zomato payment screen (handed over, NOTHING
+  ordered). User to clear the cart before the next live run / the video.
 - **ENV FINDING (matters for the judged run): device location must be ON.** It was off (location_mode=0) at session start, so
   Zomato cold-started onto a "Device location not enabled / Select a saved address" interstitial and the flow stopped at
   step 2 unable to find the search bar — the assistant asked a correct specific question ("I can't find \"Search…\". This
