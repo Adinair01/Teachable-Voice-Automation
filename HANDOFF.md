@@ -496,6 +496,23 @@ STILL BLOCKED ON ADITYA (physical / real-account, per standing rules):
 - **Priority 3 extra — airplane-mode network-stuck T10:** would also need order-replay clearance; the wrong-app trigger above
   already gives a strong real T10, so this is optional.
 
+T7 RE-VERIFICATION (Aditya cleared order replays + said cart was empty):
+- **T7 fix #1 (no look-alike / no duplicate) VERIFIED LIVE.** Replayed "Order a Margherita pizza from Domino's on Zomato";
+  at the add step the flow found a Margherita already in the cart and stopped 7/12 with: "\"Margherita pizza\" is already
+  in your cart, 1 of it. Should I add another one, or leave it as it is?" — it did NOT add a duplicate or a look-alike, did
+  NOT report false success, did NOT loop. This is a Replayer-side stop (RunLog kind=replay success=false; no hanging pending
+  to answer). **T7 fix #3 (contentDesc stepper) also confirmed** — it read the cart count "1 of it" correctly.
+- **T7 fix #2 (empty-cart happy-path regression / false-success gate) NOT yet verified** — because the cart was NOT actually
+  empty: after cold-restarting Zomato the cart screen said "2 items added" (a leftover Margherita x1 + another pizza from a
+  prior session; my run added nothing, it stopped at the add step). Needs the cart genuinely emptied, then a clean T2 run to
+  confirm the new end-of-run cart-evidence gate still reports a real success.
+- **ENV FINDING (matters for the judged run): device location must be ON.** It was off (location_mode=0) at session start, so
+  Zomato cold-started onto a "Device location not enabled / Select a saved address" interstitial and the flow stopped at
+  step 2 unable to find the search bar — the assistant asked a correct specific question ("I can't find \"Search…\". This
+  screen shows Device location not enabled, Enable, Select a saved address…"), tapped nothing, didn't loop (good stuck
+  behaviour, but it blocks a clean order run). Enabled it (`cmd location set-location-enabled true`, mode now 3); Zomato then
+  showed its normal home with the search bar and kept the "Work" address (GPS did not hijack it). LEFT ON (needed for Zomato).
+
 DELIVERABLES progress this session (phone-independent, done without waiting):
 - **README (5a + part of 5b) DONE** (commit 8332c6d): new "Target apps" declaration (Zomato primary; Settings/Clock/
   Calculator secondary; explicit "nothing is hard-coded per app"); a "The five parts" subsection naming
