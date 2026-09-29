@@ -477,7 +477,11 @@ VERIFIED live this session:
   actionable 0) when the empty demo was ended. **UX GAP FOUND:** saying "done" with no recorded steps does NOT cleanly cancel
   teach mode — it replies "I couldn't find "cab" in what you did. Let's try again." and stays in teach mode. The only exit is
   a WS reconnect (verified: tapping SAVE BACKEND URL forces stopService+restart → teach state cleared). A judge who says
-  "Book a cab" and then declines to teach is stuck in teach mode. Candidate quick fix + limitation note.
+  "Book a cab" and then declines to teach is stuck in teach mode. **FIXED + VERIFIED LIVE this session** (commit a954539):
+  backend now handles cancel/never-mind/forget-it/no while teaching → sends `teach_cancel`, phone stops the recorder and
+  clears teach state; wording on an empty/failed demo no longer implies auto-retry. Live: "Book a cab" → offer to teach →
+  "never mind" → "Okay, I've stopped. Nothing was saved." → next command ("Did the last run succeed?") answered normally
+  (not swallowed by teach mode). Required an APK rebuild+reinstall (a11y service survived `-r`; VoiceService restarted).
 - **T10 real wrong-app trigger** (new `tools/flows/t10_wrongapp_probe.json`: appPackage=Zomato, single tap step, NO launch
   step): parked on Settings, ran it → step 0 ok=false, **llm=false (nothing tapped)**, err = "I'm not in the app any more,
   this screen belongs to settings. Can you take me back to it so I can continue?", ~11s (< the 30s bar), no loop. A genuine
@@ -491,6 +495,23 @@ STILL BLOCKED ON ADITYA (physical / real-account, per standing rules):
   cart, N of it. Add another, or leave it as it is?", nothing added.
 - **Priority 3 extra — airplane-mode network-stuck T10:** would also need order-replay clearance; the wrong-app trigger above
   already gives a strong real T10, so this is optional.
+
+DELIVERABLES progress this session (phone-independent, done without waiting):
+- **README (5a + part of 5b) DONE** (commit 8332c6d): new "Target apps" declaration (Zomato primary; Settings/Clock/
+  Calculator secondary; explicit "nothing is hard-coded per app"); a "The five parts" subsection naming
+  speech-to-intent / UI-tree capture / generalisation / slot extraction / replay as the eval spec requires; "Known
+  limitations" expanded with the real Zomato findings — isAccessibilityTool flag, Home-not-deliverable delivery range,
+  per-row ADD anchoring + contentDesc labels + the T7 look-alike/false-success bugs, the OEM gesture-callback workaround,
+  and the scrcpy/on-device-recording-blocked note.
+- STILL TODO on deliverables: **deck** (submission/*_Presentation.pptx) needs the same Target-apps/five-parts/limitations
+  text and its slide-7/8 photos swapped for real frames from the NEW video (so partly blocked on the video); **demo
+  video** = the big remaining item, one unedited scrcpy take, needs Aditya live at the phone; **fresh secrets scan** of
+  history before any push (49d20eb already purged in the earlier rewrite; re-scan to be safe).
+
+REBUILD STATE: APK rebuilt+reinstalled this session (has the T12 cancel fix); backend image rebuilt (`up -d --build`) so
+the running container has the session.js changes. 27 backend tests pass. Android tests not re-run after the one-line
+VoiceService change (pure message-handler addition, no logic touched). Phone currently: VoiceService running, WS connected,
+foreground left on our MainActivity. adb reverse tcp:3100 set. Media stream still MUTED — unmute before recording.
 
 
 - Live demo-video recording session with Aditya (blocks final video + possibly deck slide 7 photos).
