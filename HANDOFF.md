@@ -536,10 +536,22 @@ DELIVERABLES progress this session (phone-independent, done without waiting):
   limitations" expanded with the real Zomato findings — isAccessibilityTool flag, Home-not-deliverable delivery range,
   per-row ADD anchoring + contentDesc labels + the T7 look-alike/false-success bugs, the OEM gesture-callback workaround,
   and the scrcpy/on-device-recording-blocked note.
+- **Fresh secrets scan (5d) DONE — CLEAN.** Scanned ALL history for key-shaped strings (OpenAI sk-, Groq gsk_, Deepgram
+  Token/40-hex, Google AIza, Slack xox…): zero hits. `backend/.env` was never committed and is gitignored; every historical
+  version of `backend/.env.example` has empty key values (only non-secret match: an old `GROQ_MODEL=llama-3.3-70b-versatile`
+  model name). The earlier history rewrite holds. Safe to push whenever Aditya gives the go-ahead.
 - STILL TODO on deliverables: **deck** (submission/*_Presentation.pptx) needs the same Target-apps/five-parts/limitations
-  text and its slide-7/8 photos swapped for real frames from the NEW video (so partly blocked on the video); **demo
-  video** = the big remaining item, one unedited scrcpy take, needs Aditya live at the phone; **fresh secrets scan** of
-  history before any push (49d20eb already purged in the earlier rewrite; re-scan to be safe).
+  text and its slide-7/8 photos swapped for real frames from the NEW video (photos are blocked on the video; the TEXT can be
+  updated any time — deferred so it's done in one pass with real frames); **demo video** = the big remaining item, one
+  unedited scrcpy take, needs Aditya live at the phone (unmute media first — still muted).
+
+PRIORITY-LIST STATUS at end of this autonomous pass (deadline 30 Sep 23:59 IST):
+1. T7 re-verify — DONE (3 fixes + new upsell bug, all verified live; T5 12/12 handover payment).
+2. T12 — DONE (verified + cancel soft-lock fixed & verified live).
+3. T10 real trigger — DONE (wrong-app path verified live; synthetic missing-control probe still valid from before).
+4. T8/T9 — SKIPPED per Aditya's decision (protect deliverables).
+5. Deliverables — 5a (limitations+target-apps) DONE, 5b README DONE / deck TODO, 5c video TODO (needs Aditya), 5d secrets scan DONE.
+6. Push + tag — waiting on Aditya's explicit go-ahead.
 
 REBUILD STATE: APK rebuilt+reinstalled this session (has the T12 cancel fix); backend image rebuilt (`up -d --build`) so
 the running container has the session.js changes. 27 backend tests pass. Android tests not re-run after the one-line
