@@ -540,10 +540,13 @@ DELIVERABLES progress this session (phone-independent, done without waiting):
   Token/40-hex, Google AIza, Slack xox…): zero hits. `backend/.env` was never committed and is gitignored; every historical
   version of `backend/.env.example` has empty key values (only non-secret match: an old `GROQ_MODEL=llama-3.3-70b-versatile`
   model name). The earlier history rewrite holds. Safe to push whenever Aditya gives the go-ahead.
-- STILL TODO on deliverables: **deck** (submission/*_Presentation.pptx) needs the same Target-apps/five-parts/limitations
-  text and its slide-7/8 photos swapped for real frames from the NEW video (photos are blocked on the video; the TEXT can be
-  updated any time — deferred so it's done in one pass with real frames); **demo video** = the big remaining item, one
-  unedited scrcpy take, needs Aditya live at the phone (unmute media first — still muted).
+- STILL TODO on deliverables: **deck** (submission/*_Presentation.pptx, 11 slides) is currently ENTIRELY Calc/Clock-centric
+  (predates the Zomato work) — needs a Zomato-PRIMARY rewrite: slide 5 to name the five parts explicitly, a Target-apps slide
+  (Zomato primary / Settings-Calc-Clock secondary), metrics refreshed with the T1-T6 Zomato results, limitations updated with
+  the Zomato findings, and slide 4/7 photos swapped for real Zomato frames. Best done in ONE pass AFTER the video (needs its
+  real frames + narrative), so deferred — a piecemeal text patch into a Calc-centric deck would be incoherent. Use the pptx
+  skill; eyeball for overflow (LibreOffice headless convert-to-pdf + PyMuPDF, as before). **demo video** = the big remaining
+  item, one unedited scrcpy take, needs Aditya live at the phone (unmute media first — still muted; clear the cart first).
 
 PRIORITY-LIST STATUS at end of this autonomous pass (deadline 30 Sep 23:59 IST):
 1. T7 re-verify — DONE (3 fixes + new upsell bug, all verified live; T5 12/12 handover payment).
