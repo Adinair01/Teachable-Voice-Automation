@@ -118,3 +118,18 @@ test('non-ordering flows get no implied slots', () => {
   assert.deepEqual(f.slots.map((s) => s.name), ['page']);
   assert.ok(!f.steps.some((s) => s.type === 'set_quantity'));
 });
+
+test('partial typing into a search box still becomes the item slot (typed "mar" -> {{item}})', () => {
+  const f = generalise({ command: 'order margherita pizza from dominos', intentKey: 'order_food',
+    slots: { item: 'margherita pizza', restaurant: "Domino's" },
+    steps: [
+      { type: 'launch', value: 'com.application.zomato' },
+      { type: 'type', selector: { resourceId: 'x:id/edittext' }, value: 'dom' },   // partial restaurant
+      { type: 'tap', selector: { text: "Domino's Pizza" } },
+      { type: 'type', selector: { resourceId: 'x:id/edittext' }, value: 'mar' },   // partial item
+    ] });
+  const dom = f.steps.find((s) => s.type === 'type' && s.slotRef === 'restaurant');
+  const mar = f.steps.find((s) => s.type === 'type' && s.slotRef === 'item');
+  assert.ok(dom && dom.value === '{{restaurant}}', 'partial "dom" -> {{restaurant}}');
+  assert.ok(mar && mar.value === '{{item}}', 'partial "mar" -> {{item}}');
+});

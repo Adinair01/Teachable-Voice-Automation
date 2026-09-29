@@ -18,7 +18,17 @@ function slotPatterns(example) {
 function tokenise(text, example, slot) {
   if (!text || !example) return null;
   const re = slotPatterns(example).find((r) => r.test(text));
-  return re ? text.replace(re, `{{${slot}}}`) : null;
+  if (re) return text.replace(re, `{{${slot}}}`);
+  // Partial typing: the user typed the first few letters of the value into a search box, then tapped a suggestion
+  // ("mar" -> Margherita, "dom" -> Domino's). If the whole typed text is a >=3-char prefix of the value (or one of its
+  // words), it IS that slot — swap the entire value for {{slot}} so replay types the FULL value the command asked for.
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const t = norm(text);
+  if (t.length >= 3) {
+    const candidates = [example, ...example.split(/\s+/)].map(norm).filter(Boolean);
+    if (candidates.some((c) => c.length > t.length && c.startsWith(t))) return `{{${slot}}}`;
+  }
+  return null;
 }
 
 // Ordering/buying tasks get optional quantity + delivery-address slots even when the demo never touched them, so
