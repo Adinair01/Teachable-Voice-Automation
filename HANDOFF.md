@@ -433,16 +433,34 @@ follow-up reply path, T10, T7 beyond the upsell-interstitial skip. NOT STARTED: 
 
 Also done this session: compact teach panel (label + Done only, parked mid-left, mic hidden while teaching) because the
 old panel covered Zomato's in-restaurant Search; new services/runStatus.js + tests; matchFlow now returns `clarify` for
-a generic item; 27 backend tests pass. Commits: 506b231, 244298b.
+a generic item; 27 backend tests pass; Kotlin 56 tests pass.
+Commits (this session, all authored Aditya Nair, no Claude attribution): 506b231 (TouchCatcher/overlay/generalise +
+failed-learn logging), 244298b (T12/T13/T14 + clarify + compact panel), ca7bdc2 (handoff T1/T2/T4/T5/T13/T14 +
+deadline fix), 8af2e51 (handoff T6-work/T14-pass/T13-follow-up), 4fb9a31 (T10 stuck handling), fb54434 (T7 look-alike/
+plausible-LLM/cart-evidence/contentDesc stepper).
 Gotchas: `adb shell input tap` on anything that removes/changes cart contents is denied by the auto-mode classifier —
-the USER empties the cart between runs. Groq free tier 429s on bursts (sleep between matcher calls).
+the USER empties the cart between runs. Groq free tier 429s on bursts (sleep between matcher calls). CLAUDE.md deadline
+line was corrected to 30 Sep this session.
 
-## Next steps (immediate, in order)
-1. T7 + T10 plans agreed with the user first, then build. T8/T9 (Amazon) go/no-go only after T7/T10/deliverables.
-3. Deliverables: unedited scrcpy recording in the required order, README/deck (5 named architecture parts, target apps,
-   limitations incl. Zomato findings and the address-sheet finding), fresh secrets scan of history (49d20eb is no longer in
-   the repo; the earlier rewrite + key rotation is recorded above; re-scan before any push).
-4. Repo push + tag: WAIT for the user's explicit go-ahead. CLAUDE.md deadline line still says 25 Sep — real deadline 30 Sep.
+## Next steps (immediate, in order — as of 2026-09-29, deadline 30 Sep 23:59 IST, ~1 day left)
+0. **IMMEDIATE — live cart is dirty:** after the last T7 run the phone was left on a Zomato "Dishes loved by friends"
+   sheet with the stray **Double Cheese Margherita (+ Margherita x1)** in cart. Nothing tapped by the assistant since.
+   User must close the sheet + empty the cart before any further live run.
+1. **Re-verify the T7/plausible-LLM/cart-evidence fixes live** (all CODED, unit-tested, NOT re-run on the phone): (a) a
+   plain T2 replay from an empty cart still reaches payment (regression check on the new stricter end-of-run + LLM
+   plausibility gates); (b) stage Margherita x1 in cart via one normal replay, then ask for Margherita again -> expect the
+   "already in your cart, N of it. Add another, or leave it as it is?" question, nothing added. That question = the 3-pt
+   T7 result. Autonomous popup-dismissal is NOT built (only the plausible-dismiss LLM path + cart-state question).
+2. T12 live (say "Book a cab" -> "I haven't learned that yet ..."); T10 on a real stuck screen if one can be staged
+   without logging out (e.g. launch the flow while parked on a non-Zomato screen -> "not in the app any more" path).
+3. T8/T9 (second app) — GO/NO-GO decision with the user. Amazon estimated 6-8h and may be a11y-hostile; a
+   Settings/Calc/Clock flow already generalises but T8 says "e-commerce". Do NOT start until T7/T10/deliverables solid.
+4. Deliverables: unedited scrcpy recording in the required order (teach / exact replay / paraphrase / changed-slot /
+   asks-a-question-when-stuck), README/deck (5 named architecture parts + diagrams, target-apps declaration, limitations
+   incl. Zomato findings, the Home-not-deliverable address finding, the isAccessibilityTool flag, GROQ_MODEL deviation),
+   fresh secrets scan of history (49d20eb no longer in repo; earlier rewrite + key rotation recorded above; re-scan
+   before any push).
+5. Repo push + tag `PRISM_GENAI_HACKATHON_Y2026`: WAIT for the user's explicit go-ahead.
 
 ## Open items
 - Live demo-video recording session with Aditya (blocks final video + possibly deck slide 7 photos).
