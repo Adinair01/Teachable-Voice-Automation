@@ -232,10 +232,17 @@ a per-app script. A judge can teach a brand-new flow on any of these — or anot
   `android:isAccessibilityTool="true"`, which we set. Without it neither the recorder nor the payment ScreenGuard can
   see those buttons. Google Play restricts that flag to genuine accessibility tools; an OEM system service — our
   production shape — qualifies.
-- **Delivery range is account- and location-specific.** On the test account Domino's delivers to the saved *Work*
-  address but not *Home* (out of range), so a "deliver to home" run correctly **stops at the address step with a
-  specific reason** rather than forcing an undeliverable address. The address-switcher path only exercises fully when
-  the account has a second deliverable address.
+- **Delivery range is account- and location-specific, and the address slot is only a WEAK pass.** On the test account
+  Domino's delivers to the saved *Work* address but not *Home* (out of range), so a "deliver to home" run correctly
+  **stops at the address step with a specific reason** rather than forcing an undeliverable address. Because Work is
+  already the account's default address and there is no second deliverable address, a "deliver to work" run reaches the
+  Work address but **no actual address switch is observed** — the picker's switching path is unit-tested but not proven
+  live. Stated plainly: T6 is a weak pass.
+- **T7's autonomous-handling (6-point) path is demonstrated but not independently forced.** The replayer autonomously
+  dismissed a real Zomato promo interstitial ("Add items worth ₹X… / Unlock 20% OFF… Continue") mid-flow and still
+  reached payment; the already-in-cart trigger is handled by asking a specific question. A promo pop-up shown *on
+  restaurant open* uses the same dismissal mechanism but cannot be forced on demand (Zomato decides when to show it), so
+  that specific variant is not independently verified.
 - **Repeated controls need row anchoring.** Every dish's "ADD" shares the same id/text and Zomato keeps the label in
   `contentDesc` (empty `text`), so a tap is anchored to the row whose caption names the requested item — never "the
   first ADD". The quantity stepper likewise reads its count from `contentDesc`. (Bugs found and fixed while testing:
