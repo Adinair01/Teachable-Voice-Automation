@@ -2,7 +2,15 @@ import WebSocket from 'ws';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
-const STT_URL = 'wss://api.deepgram.com/v1/listen?model=nova-3&encoding=linear16&sample_rate=16000&channels=1&smart_format=true&punctuate=true';
+// Domain words that generic STT mangles ("Farmhouse" -> "farmer's", "Zomato" -> "Tomato", "Domino's" -> "dominoes").
+// Nova-3 keyterm prompting biases recognition toward these exact terms. This is a transcription-accuracy hint, NOT
+// flow logic or a hard-coded flow — it just helps the recogniser hear the app/menu vocabulary a food assistant uses.
+const KEYTERMS = [
+  'Zomato', "Domino's", 'Margherita', 'Farmhouse', 'pizza', 'garlic bread', 'paneer', 'Amazon', 'Myntra',
+  'earbuds', 'Bluetooth', 'Calculator', 'stopwatch',
+];
+const STT_URL = 'wss://api.deepgram.com/v1/listen?model=nova-3&encoding=linear16&sample_rate=16000&channels=1&smart_format=true&punctuate=true'
+  + KEYTERMS.map((t) => `&keyterm=${encodeURIComponent(t)}`).join('');
 const TTS_URL = 'https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=mp3';
 
 /** One push-to-talk utterance streamed to Deepgram Nova 3. finish() resolves with the final transcript. */
