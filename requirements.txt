@@ -1,0 +1,26 @@
+# Teachable Voice Automation — prerequisites to build and run
+#
+# This project is Node.js (backend) + Kotlin/Android (app). This file lists the
+# real tools and versions you need. It is NOT a Python project; there is no pip
+# install step. Dependency lists live in each sub-project's manifest.
+
+## Backend (Node + Express + MongoDB, Docker)
+- Node.js >= 20            # backend engines requirement (ESM, node:test)
+- Docker + Docker Compose  # `docker compose up` builds backend + MongoDB (mongo:7)
+  # MongoDB is provided by the compose stack; no separate install needed.
+- Backend dependency list: see backend/package.json
+  # (express, mongoose, ws, zod, pino, cors, dotenv)
+
+## Android app (Kotlin)
+- JDK 17
+- Android SDK: platform android-35, build-tools 35.0.0
+- Gradle 9.7 (or just use the bundled wrapper: ./gradlew)
+- Build: `cd android && ./gradlew :app:assembleDebug`
+
+## API keys (required at runtime — put them in backend/.env, NEVER commit .env)
+- DEEPGRAM_API_KEY   # speech-to-text (Nova-3) + text-to-speech (Aura)
+- GROQ_API_KEY       # LLM: intent + slot extraction, generalise, paraphrase match
+  # Copy backend/.env.example -> backend/.env and fill these in.
+  # GROQ_MODEL defaults to openai/gpt-oss-20b.
+
+# See README.md for full setup, install, and run instructions.
