@@ -11,6 +11,9 @@ It works through Android's **AccessibilityService**, so the target app needs no 
 is exactly where per-app voice integrations (Bixby included) stop. Production shape: the same architecture as an OEM
 system service.
 
+**▶️ Demo video (full run):** https://youtu.be/Mcz7sx1gQbA — teach a flow by voice, then exact / paraphrase /
+changed-slot replays, and the assistant asking a question when it needs one. A copy is also in [`submission/`](submission/).
+
 ---
 
 ## How it works
