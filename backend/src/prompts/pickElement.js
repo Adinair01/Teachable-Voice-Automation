@@ -28,6 +28,10 @@ export async function pickElement(input, deps = {}) {
     system: SYSTEM,
     user: JSON.stringify({ intent: input.intent, slots: input.slots, nodes: input.nodes }),
     schema: output,
+    // An index we never sent is a hallucination, so let the next model answer instead of giving up.
+    // index=null is a real answer ("nothing fits") and stays final: a second opinion must not talk us
+    // into tapping something the first model correctly refused to tap.
+    validate: (o) => o.index === null || valid.has(o.index),
     ...deps,
   });
   // Never trust the model's index: it must be one we actually sent.

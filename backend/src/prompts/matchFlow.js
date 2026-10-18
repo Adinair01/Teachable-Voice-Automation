@@ -34,7 +34,15 @@ Reply JSON: {"flowId": "<id or null>", "slots": {...}, "intentKey": "...", "clar
 export async function matchFlow(utterance, flows, deps = {}) {
   const ids = new Set(flows.map((f) => String(f._id)));
   const listing = flows.map((f) => ({ id: String(f._id), description: f.description, slots: f.slots }));
-  const out = await groqJson({ system: SYSTEM, user: JSON.stringify({ command: utterance, flows: listing }), schema: output, ...deps });
+  const out = await groqJson({
+    system: SYSTEM,
+    user: JSON.stringify({ command: utterance, flows: listing }),
+    schema: output,
+    // A flow id we never sent is a hallucination -> next model. flowId=null is a real answer ("not learned
+    // yet") and stays final, so no fallback model can force an unknown command into some existing flow.
+    validate: (o) => !o.flowId || ids.has(o.flowId),
+    ...deps,
+  });
   const flowId = out.flowId && ids.has(out.flowId) ? out.flowId : null;
   const slotNames = new Set(flows.find((f) => String(f._id) === flowId)?.slots?.map((s) => s.name));
   return { ...out, flowId, clarify: flowId && out.clarify && slotNames.has(out.clarify.slot) ? out.clarify : null };
