@@ -37,9 +37,11 @@ object RowContext {
     fun rowOf(nodes: List<UiNode>, node: UiNode, sameKind: (UiNode) -> Boolean, parent: IntArray = parents(nodes)): UiNode {
         var row = node
         for (up in 0 until MAX_UP) {
-            val p = nodes.getOrNull(parent[row.index]) ?: break
+            // getOrElse, not [..]: a caller may hand us a node list whose indices do not line up with it, and a
+            // crash here would take down a judged run.
+            val p = nodes.getOrNull(parent.getOrElse(row.index) { -1 }) ?: break
             if (subtree(nodes, p).any { it.index != node.index && sameKind(it) }) break
-            if (p.scrollable || parent[p.index] < 0) break // the list, and the screen itself, are never a row
+            if (p.scrollable || parent.getOrElse(p.index) { -1 } < 0) break // the list, and the screen, are never a row
             row = p
         }
         return row
@@ -71,8 +73,12 @@ object RowContext {
         return null
     }
 
-    /** Case, spacing and punctuation-insensitive form: "Domino's Pizza" == "dominos pizza". */
-    fun norm(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
+    /**
+     * Case, spacing and punctuation-insensitive form: "Domino's Pizza" == "dominos pizza". "&" becomes "and" first,
+     * because a menu writes "Corn & Cheese Pizza" while the user says "corn and cheese pizza"; dropping the "&"
+     * instead would leave the two forms permanently unequal.
+     */
+    fun norm(s: String) = s.lowercase().replace("&", " and ").filter { it.isLetterOrDigit() }
 
     private fun texts(nodes: List<UiNode>, row: UiNode) = subtree(nodes, row)
         .filter { !it.password }

@@ -133,3 +133,52 @@ test('partial typing into a search box still becomes the item slot (typed "mar" 
   assert.ok(dom && dom.value === '{{restaurant}}', 'partial "dom" -> {{restaurant}}');
   assert.ok(mar && mar.value === '{{item}}', 'partial "mar" -> {{item}}');
 });
+
+/** A demo done straight after a search shows ONE of the control, which used to learn no slot at all. */
+test('a control that was alone on the demo screen is still anchored to its row when its caption names an action', () => {
+  const add = (over) => generalise({
+    command: "order a margherita pizza from Domino's", intentKey: 'order_food',
+    slots: { item: 'Margherita pizza' },
+    steps: [
+      { type: 'launch', value: 'com.application.zomato' },
+      { type: 'tap', selector: { resourceId: 'z:id/text_view_title', contentDesc: 'ADD' },
+        context: ['Margherita Pizza', '₹109', 'ADD'], ...over },
+    ],
+  }).steps[1];
+  for (const candidates of [1, 7]) {
+    const s = add({ candidates });
+    assert.equal(s.selector.near, '{{item}}', `candidates=${candidates} must still aim at the row`);
+    assert.equal(s.slotRef, 'item');
+    assert.equal(s.selector.resourceId, '', 'the demonstrated row id must not outrank the anchor');
+  }
+});
+
+test('a uniquely and distinctively captioned control is NOT anchored, even if its row mentions the item', () => {
+  // "View Cart" names itself. Anchoring it would make the step fail whenever the cart bar stops echoing the dish.
+  const f = generalise({
+    command: 'order a margherita pizza', intentKey: 'order_food', slots: { item: 'Margherita pizza' },
+    steps: [
+      { type: 'launch', value: 'z' },
+      { type: 'tap', selector: { resourceId: 'z:id/cart', text: 'View Cart' }, candidates: 1,
+        context: ['View Cart', '1 item', 'Margherita Pizza'] },
+    ],
+  });
+  assert.equal(f.steps[1].selector.near ?? '', '');
+  assert.equal(f.steps[1].slotRef, null);
+});
+
+test('a slot-bound tap verifies that the screen it opened names the value asked for', () => {
+  const f = generalise({
+    command: "order a margherita pizza from Domino's", intentKey: 'order_food',
+    slots: { item: 'Margherita pizza', restaurant: "Domino's" },
+    steps: [
+      { type: 'launch', value: 'z' },
+      { type: 'tap', selector: { text: "Domino's Pizza" }, candidates: 1,
+        screen: ["Domino's Pizza", '30-35 mins', 'Search in Domino\'s Pizza'] },
+      // a screen that named nothing we asked for leaves the expectation alone
+      { type: 'tap', selector: { text: 'Veg' }, candidates: 1, screen: ['Filters', 'Sort by'] },
+    ],
+  });
+  assert.equal(f.steps[1].expect.textContains, '{{restaurant}}', 'stored as the bare token, not the demo wording');
+  assert.equal(f.steps[2].expect.textContains ?? '', '');
+});

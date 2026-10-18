@@ -170,5 +170,17 @@ class TeachOnceGeneraliseTest {
         assertEquals("Farmhouse Pizza", menu.addedTo)
     }
 
+    @Test fun `case 10 - a slot-bound target below the fold is scrolled to, even without a row anchor`() {
+        // Taught on a list the user had already scrolled; replay starts at the top. Verified live on Settings:
+        // taught "Battery", asked for "Apps", which sits below the fold.
+        val menu = Menu(listOf(Dish("Margherita Pizza"), Dish("Farmhouse Pizza"), Dish("Veg Extravaganza")), scrollRevealsFrom = 1)
+        val step = FlowStep(StepType.TAP, Selector(text = "{{item}}"), slotRef = "item")
+        val r = runBlocking {
+            Replayer(menu, cfg = fast).run(Flow("order_food", "order", PKG, listOf(step)), mapOf("item" to "Veg Extravaganza"))
+        }
+        assertTrue(r.steps.toString(), r.success)
+        assertTrue("should have scrolled to reach it", menu.scrolls > 0)
+    }
+
     private companion object { const val PKG = "com.application.zomato" }
 }

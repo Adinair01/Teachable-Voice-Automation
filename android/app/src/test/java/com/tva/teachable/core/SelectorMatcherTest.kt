@@ -54,6 +54,37 @@ class SelectorMatcherTest {
         assertEquals("burger near me", resolveSlots("{{query}} near me", mapOf("query" to "burger")))
     }
 
+    /** Nodes with real depth, so ancestry (and therefore "which control would this tap hit") is meaningful. */
+    private fun tree(vararg rows: Triple<Int, String, Boolean>) = rows.mapIndexed { i, (d, t, click) ->
+        UiNode(i, d, "p", if (t == "ADD") "z:id/add_button" else "", if (t == "ADD") "" else t, if (t == "ADD") "ADD" else "", "", "", click, false, false, false)
+    }
+
+    @Test fun aCaptionRepeatedAcrossSectionsIsNotAmbiguous() {
+        // Real Zomato search: "Domino's Pizza" appears in the suggestion list, a recommendation carousel and a third
+        // section, each inside its own clickable row. The caption NAMES the target, so the first hit is the one the
+        // demonstration used — refusing here would stall the taught flow at the restaurant step.
+        val nodes = tree(
+            Triple(0, "", false),
+            Triple(1, "", true), Triple(2, "Domino's Pizza", false),
+            Triple(1, "", true), Triple(2, "Domino's Pizza", false),
+            Triple(1, "", true), Triple(2, "Domino's Pizza", false),
+        )
+        assertEquals(2, SelectorMatcher.target(nodes, Selector(text = "Domino's Pizza"), null, forTap = true)?.index)
+    }
+
+    @Test fun anActionCaptionRepeatedPerRowIsRefused() {
+        // The same shape, but the caption names an ACTION: one ADD per dish identifies nothing, so acting on the
+        // first would add whichever dish happens to come first in the tree.
+        val nodes = tree(
+            Triple(0, "", false),
+            Triple(1, "", true), Triple(2, "Margherita Pizza", false), Triple(2, "ADD", true),
+            Triple(1, "", true), Triple(2, "Farmhouse Pizza", false), Triple(2, "ADD", true),
+        )
+        assertNull(SelectorMatcher.target(nodes, Selector(resourceId = "z:id/add_button", contentDesc = "ADD"), null, forTap = true))
+        // The row anchor is how that tap is meant to be aimed, and it still works.
+        assertEquals(6, SelectorMatcher.target(nodes, Selector(contentDesc = "ADD", near = "Farmhouse Pizza"), null, forTap = true)?.index)
+    }
+
     @Test fun spokenSlotMatchesDespitePunctuation() {
         assertEquals(0, SelectorMatcher.find(listOf(node(0, text = "Domino's Pizza")), Selector(text = "dominos Pizza"))?.index)
     }

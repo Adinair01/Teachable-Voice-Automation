@@ -21,6 +21,7 @@ import com.tva.teachable.core.StepType
  * Pure event->step logic; the service only forwards events.
  */
 private val IME = Regex("inputmethod|\\.ime$|keyboard", RegexOption.IGNORE_CASE)
+private const val MAX_CAPTIONS = 15
 
 class Recorder(private val ownPackage: String, private val ignoredPackages: Set<String> = setOf("com.android.systemui")) {
     private val steps = ArrayList<FlowStep>()
@@ -45,7 +46,7 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
                 if (onBoundary(screen)) { pendingType = null; return }
                 if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) onText(e) else if (!touchMode) onClick(e, screen)
             }
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> onWindow(pkg)
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> onWindow(pkg, UiTreeReader.readLive(e.source?.window?.root).nodes)
         }
     }
 
@@ -69,7 +70,11 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         )
         val me = src?.let { UiTreeReader.toUiNode(it) }
         val node = me?.let { m -> screen.firstOrNull { it.bounds == m.bounds && it.resourceId == m.resourceId && it.className == m.className } }
-        if (!sel.isEmpty) steps += FlowStep(StepType.TAP, sel, context = node?.let { rowContext(screen, it, sel) }.orEmpty())
+        if (!sel.isEmpty) steps += FlowStep(
+            StepType.TAP, sel,
+            context = node?.let { rowContext(screen, it, sel) }.orEmpty(),
+            candidates = node?.let { sameKindCount(screen, sel) } ?: 0,
+        )
     }
 
     /** A finger tap seen by the TouchCatcher at (x, y); [screen] was read before the tap reached the app. */
@@ -82,7 +87,7 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         flushType()
         if (node.editable) return // focusing a field: the typed text becomes the step
         val sel = TapTarget.selector(screen, node)
-        if (!sel.isEmpty) steps += FlowStep(StepType.TAP, sel, context = rowContext(screen, node, sel))
+        if (!sel.isEmpty) steps += FlowStep(StepType.TAP, sel, context = rowContext(screen, node, sel), candidates = sameKindCount(screen, sel))
     }
 
     /** An upward swipe while teaching: replay scrolls the page forward at this point too. */
@@ -92,24 +97,46 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         if (steps.lastOrNull()?.type != StepType.SCROLL) steps += FlowStep(StepType.SCROLL)
     }
 
-    /**
-     * Captions of the tapped element's row, only when the same control repeats on screen (one ADD per dish): the
-     * backend turns the caption that names a slot value into selector.near, so replay taps the right row's ADD.
-     */
-    private fun rowContext(screen: List<UiNode>, node: UiNode, sel: Selector): List<String> {
-        val sameKind = { n: UiNode ->
-            if (sel.resourceId.isNotEmpty()) n.resourceId == sel.resourceId else sel.text.isNotEmpty() && n.text == sel.text
-        }
-        if (screen.count(sameKind) < 2) return emptyList()
-        return RowContext.of(screen, node, sameKind)
+    private fun sameKind(sel: Selector): (UiNode) -> Boolean = { n ->
+        if (sel.resourceId.isNotEmpty()) n.resourceId == sel.resourceId else sel.text.isNotEmpty() && n.text == sel.text
     }
 
-    /** The screen that appears after an action becomes that action's `expect` (what replay must verify). */
-    private fun onWindow(pkg: String) {
+    private fun sameKindCount(screen: List<UiNode>, sel: Selector) = screen.count(sameKind(sel))
+
+    /**
+     * Captions of the tapped element's row: the backend turns the caption that names a slot value into
+     * selector.near, so replay taps the right row's ADD.
+     *
+     * Captured for EVERY tap, not only when the control already repeats on screen. A demonstration done straight
+     * after a search shows one result and one ADD, and recording no row there produced a flow with no slot at all,
+     * which then matched every row's ADD on a fuller menu. [FlowStep.candidates] carries how many there were, so
+     * the backend can still tell "this control repeats" from "this control was alone".
+     */
+    private fun rowContext(screen: List<UiNode>, node: UiNode, sel: Selector): List<String> =
+        RowContext.of(screen, node, sameKind(sel))
+
+    /**
+     * The screen that appears after an action becomes that action's `expect` (what replay must verify). Its captions
+     * are recorded too: the backend keeps the one that names a slot value, so replay can check it really opened the
+     * restaurant or dish that was asked for instead of only "still in the same app".
+     */
+    private fun onWindow(pkg: String, screen: List<UiNode>) {
         flushType()
         val last = steps.lastOrNull() ?: return
-        if (last.type == StepType.TAP && last.expect.packageName.isEmpty()) steps[steps.lastIndex] = last.copy(expect = Expect(packageName = pkg))
+        if (last.type == StepType.TAP && last.expect.packageName.isEmpty()) {
+            steps[steps.lastIndex] = last.copy(expect = Expect(packageName = pkg), screen = captions(screen))
+        }
     }
+
+    /** Short, wordy captions of a screen, deduplicated — enough for the backend to find a slot value among them. */
+    private fun captions(screen: List<UiNode>): List<String> = screen.asSequence()
+        .filter { !it.password && !it.editable }
+        .flatMap { sequenceOf(it.text, it.contentDesc) }
+        .map { it.trim() }
+        .filter { it.length in 2..60 && it.any(Char::isLetter) }
+        .distinct()
+        .take(MAX_CAPTIONS)
+        .toList()
 
     private fun onBoundary(screen: List<UiNode>): Boolean {
         val b = ScreenGuard.screen(screen) ?: return false

@@ -37,6 +37,14 @@ data class Selector(
 
 object SelectorMatcher {
     private const val MAX_UP = 8
+    const val ID_TIER = 0
+    const val TEXT_TIER = 1
+    const val DESC_TIER = 2
+    const val CLASS_TIER = 3
+    const val NO_TIER = -1
+
+    /** A caption that names an action, not a thing: it is repeated once per row, so it identifies nothing. */
+    private val ACTION_WORD = Regex("add(\\s+item)?|\\+|buy( now)?|order( now)?|select|choose|get|go", RegexOption.IGNORE_CASE)
 
     /**
      * Best match in the flat node list, or null. Password nodes never match by text.
@@ -49,7 +57,14 @@ object SelectorMatcher {
     }
 
     /** Every node matching the highest-priority field that matches anything (all the ADDs, not just the first). */
-    fun findAll(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false): List<UiNode> {
+    fun findAll(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false): List<UiNode> =
+        matched(nodes, sel, textContains).second
+
+    /**
+     * The hits plus WHICH field produced them: [ID_TIER]/[CLASS_TIER] say nothing about the target's identity (an id
+     * every row reuses), while the text/desc tiers mean the control was found by its own caption.
+     */
+    fun matched(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false): Pair<Int, List<UiNode>> {
         val steps = listOf<(UiNode) -> Boolean>(
             { sel.resourceId.isNotEmpty() && it.resourceId == sel.resourceId },
             { sel.text.isNotEmpty() && !it.password && textMatches(it.text, sel.text, textContains) },
@@ -61,10 +76,10 @@ object SelectorMatcher {
             val hits = nodes.filter(pred)
             if (hits.isEmpty()) continue
             // Apps reuse ids ("container") across many elements: the recorded caption picks the right one.
-            if (tier == 0 && hits.size > 1) narrowByCaption(nodes, hits, sel)?.let { return it }
-            return hits
+            if (tier == ID_TIER && hits.size > 1) narrowByCaption(nodes, hits, sel)?.let { return tier to it }
+            return tier to hits
         }
-        return emptyList()
+        return NO_TIER to emptyList()
     }
 
     /**
@@ -85,21 +100,35 @@ object SelectorMatcher {
     ): UiNode? {
         val pools = if (forTap) listOf(nodes.filter { it.clickable }, nodes) else listOf(nodes)
         val parent by lazy { RowContext.parents(tree) }
-        fun pick(hits: List<UiNode>): UiNode? =
-            hits.firstOrNull()?.takeIf { !forTap || oneControl(tree, parent, hits) }
+        fun pick(tier: Int, hits: List<UiNode>): UiNode? =
+            hits.firstOrNull()?.takeIf { !forTap || !blind(tree, parent, tier, sel, hits) }
         val byValue = { pool: List<UiNode> ->
-            if (slotValue.isNullOrEmpty()) emptyList() else findAll(pool, Selector(text = slotValue), textContains = true)
+            if (slotValue.isNullOrEmpty()) NO_TIER to emptyList()
+            else matched(pool, Selector(text = slotValue), textContains = true)
         }
         for (pool in pools) {
-            val hits = findAll(pool, sel)
+            val (tier, hits) = matched(pool, sel)
             if (hits.isNotEmpty()) {
-                pick(hits)?.let { return it }
-                // The selector alone is ambiguous; only the slot value may still single one control out.
-                return pick(byValue(pool))
+                pick(tier, hits)?.let { return it }
+                // The selector cannot identify one control; only the slot value may still single one out.
+                return byValue(pool).let { (t, h) -> pick(t, h) }
             }
-            if (forTap) pick(byValue(pool))?.let { return it }
+            if (forTap) byValue(pool).let { (t, h) -> pick(t, h) }?.let { return it }
         }
         return null
+    }
+
+    /**
+     * Would acting on these hits be a guess? Only when the selector did not identify ONE control: it matched on a
+     * field that says nothing about identity (an id or class every row reuses), or on a caption that names an action
+     * rather than a thing ("ADD", "+"). Hits that share one clickable node are the same control seen twice and are
+     * never a guess; several different controls behind a NAMING caption are the app repeating its own content in a
+     * suggestion list and a carousel, where the first hit is the one the demonstration used.
+     */
+    private fun blind(tree: List<UiNode>, parent: IntArray, tier: Int, sel: Selector, hits: List<UiNode>): Boolean {
+        if (hits.size <= 1 || oneControl(tree, parent, hits)) return false
+        val caption = if (tier == TEXT_TIER) sel.text else if (tier == DESC_TIER) sel.contentDesc else ""
+        return caption.isEmpty() || ACTION_WORD.matches(caption.trim())
     }
 
     /** Hits that resolve to one clickable node are one control seen twice; more than one is a real ambiguity. */
@@ -111,9 +140,10 @@ object SelectorMatcher {
         var cur = n
         repeat(MAX_UP) {
             if (cur.clickable) return cur.index
-            cur = tree.getOrNull(parent.getOrElse(cur.index) { -1 }) ?: return cur.index
+            // No clickable ancestor: stay distinct per node, so two dead captions are not mistaken for one control.
+            cur = tree.getOrNull(parent.getOrElse(cur.index) { -1 }) ?: return n.index
         }
-        return cur.index
+        return n.index
     }
 
     /**

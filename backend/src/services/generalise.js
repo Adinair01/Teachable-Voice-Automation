@@ -1,6 +1,8 @@
 import { isSensitiveStep, looksLikeCredentialField } from './sensitive.js';
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** "Corn & Cheese" and "corn and cheese" must compare equal; mirrors RowContext.norm on the Android side. */
+const amp = (s) => s.replace(/&/g, ' and ');
 
 /**
  * Case- and punctuation-insensitive pattern for a spoken slot value: "Domino's" matches a typed "dominos" and
@@ -8,7 +10,8 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * ("Margherita pizza" spoken, only "margherita" typed into the search box).
  */
 function slotPatterns(example) {
-  const loose = (s) => s.replace(/[^a-z0-9]/gi, '').split('').map(esc).join('[^a-z0-9]?');
+  // "&" spells out, so a spoken "corn and cheese pizza" still matches the menu's "Corn & Cheese Pizza".
+  const loose = (s) => amp(s).replace(/[^a-z0-9]/gi, '').split('').map(esc).join('[^a-z0-9]?');
   const words = example.split(/\s+/).filter((w) => w.replace(/[^a-z0-9]/gi, '').length >= 4).sort((a, b) => b.length - a.length);
   // Only the single longest word: the distinctive part ("Margherita"), never a generic one ("pizza" is in "Domino's Pizza").
   return [example, ...(words.length > 1 ? words.slice(0, 1) : [])].filter((s) => loose(s)).map((s) => new RegExp(loose(s), 'i'));
@@ -22,13 +25,25 @@ function tokenise(text, example, slot) {
   // Partial typing: the user typed the first few letters of the value into a search box, then tapped a suggestion
   // ("mar" -> Margherita, "dom" -> Domino's). If the whole typed text is a >=3-char prefix of the value (or one of its
   // words), it IS that slot — swap the entire value for {{slot}} so replay types the FULL value the command asked for.
-  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const norm = (s) => amp(s.toLowerCase()).replace(/[^a-z0-9]/g, '');
   const t = norm(text);
   if (t.length >= 3) {
     const candidates = [example, ...example.split(/\s+/)].map(norm).filter(Boolean);
     if (candidates.some((c) => c.length > t.length && c.startsWith(t))) return `{{${slot}}}`;
   }
   return null;
+}
+
+/**
+ * A caption that names an ACTION rather than a thing ("ADD", "+") is repeated once per row, so it identifies no
+ * single control and the tap has to be aimed by its row instead. Mirrors SelectorMatcher's rule on the Android side.
+ */
+const ACTION_CAPTION = /^(add(\s+item)?|add to (cart|bag|basket)|\+|buy( now)?|order( now)?|select|choose|get|go)$/i;
+
+/** Does the control's own caption say WHICH one it is? If not, replay needs selector.near to aim the tap. */
+function identifies(sel) {
+  const caption = (sel.text || sel.contentDesc || '').trim();
+  return caption !== '' && !ACTION_CAPTION.test(caption);
 }
 
 // Ordering/buying tasks get optional quantity + delivery-address slots even when the demo never touched them, so
@@ -47,7 +62,7 @@ export function generalise({ command, intentKey, slots, steps }) {
   for (const raw of steps) {
     const sel = { resourceId: '', text: '', contentDesc: '', className: '', ...(raw.selector ?? {}) };
     if (looksLikeCredentialField(`${sel.resourceId} ${sel.contentDesc} ${sel.text}`)) continue;
-    const { context = [], ...rest } = raw;
+    const { context = [], candidates = 0, screen: landedOn = [], ...rest } = raw;
     const step = { ...rest, selector: sel, slotRef: null, value: raw.value ?? '', sensitive: false, expect: raw.expect ?? {} };
     for (const [slot, example] of slotEntries) {
       if (step.type === 'type') {
@@ -68,7 +83,12 @@ export function generalise({ command, intentKey, slots, steps }) {
     // Only when the tap's OWN text/desc did not already carry the slot: a self-labelled tap (a search result whose
     // own caption IS the varying value) must fall through to the substring-contains slot match instead — templating
     // `near` from the same text here would require an exact match on a caption that intentionally changes per row.
-    if (step.type === 'tap' && context.length && !step.slotRef) {
+    //
+    // Anchored when the control repeated on the demo screen (as before) OR when its own caption names an action
+    // rather than a thing. The second case is the demo done after a search: one result, one ADD, nothing to tell
+    // rows apart later. A uniquely and distinctively captioned control ("View Cart") is left unanchored, so a row
+    // that merely happens to mention the item cannot start failing its step.
+    if (step.type === 'tap' && context.length && !step.slotRef && (candidates > 1 || !identifies(sel))) {
       for (const [slot, example] of slotEntries) {
         const near = context.map((c) => tokenise(c, example, slot)).filter(Boolean).sort((a, b) => a.length - b.length)[0];
         if (near) { sel.near = near; step.slotRef ??= slot; break; }
@@ -79,6 +99,13 @@ export function generalise({ command, intentKey, slots, steps }) {
       step.expect = {};
       // A resource-id names the demonstrated element (digit_5), not the parameterised one, and outranks text on replay.
       sel.resourceId = '';
+      // ...but if that screen NAMED the slot value in the demo, replay can check it named the new one too: proof the
+      // tap opened the restaurant or dish actually asked for. Stored as the bare token, never with the demo's own
+      // wording around it, so it resolves cleanly for any value.
+      const example = slots?.[step.slotRef];
+      if (example && landedOn.some((c) => tokenise(c, example, step.slotRef))) {
+        step.expect = { textContains: `{{${step.slotRef}}}` };
+      }
     }
     step.sensitive = isSensitiveStep(step);
     out.push(step);

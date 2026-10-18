@@ -6,6 +6,7 @@ import com.tva.teachable.core.CartState
 import com.tva.teachable.core.BoundaryKind
 import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
+import com.tva.teachable.core.RowContext
 import com.tva.teachable.core.ScreenGuard
 import com.tva.teachable.core.ScreenSummary
 import com.tva.teachable.core.Selector
@@ -91,10 +92,10 @@ class Replayer(
         val value = resolveSlots(step.value, slots)
         val slotValue = step.slotRef?.let { slots[it] }?.trim().orEmpty()
         return when (step.type) {
-            StepType.LAUNCH -> finish(i, step, device.launch(value) && waitFor { it.nodes.firstOrNull()?.packageName == value })
+            StepType.LAUNCH -> finish(i, step, device.launch(value) && waitFor { it.nodes.firstOrNull()?.packageName == value }, slots = slots)
             StepType.WAIT -> { delay(value.toLongOrNull() ?: 500); StepResult(i, true) }
-            StepType.BACK -> finish(i, step, device.back())
-            StepType.SCROLL -> finish(i, step, device.scroll(device.tree()))
+            StepType.BACK -> finish(i, step, device.back(), slots = slots)
+            StepType.SCROLL -> finish(i, step, device.scroll(device.tree()), slots = slots)
             StepType.TAP, StepType.TYPE -> targeted(i, step, next, slots, value)
             // Optional by design: "order a pizza" keeps the app's own quantity and address.
             StepType.SET_QUANTITY -> if (slotValue.isEmpty()) StepResult(i, true) else quantity(i, step, slots, slotValue)
@@ -125,6 +126,14 @@ class Replayer(
             }
             if (found == null) return StepResult(i, false, error = stuck("\"${sel.near}\""))
         }
+        // A slot-bound target can simply be further down a list that the demonstration had already scrolled past
+        // ("Apps" below the fold when the demo was given on "Battery"). Scrolling only reveals; the target is still
+        // found by the same selector, so nothing is ever tapped on a guess.
+        if (found == null && sel.near.isEmpty() && !slotValue.isNullOrEmpty()) {
+            repeat(cfg.scrollTries) {
+                if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, probe)
+            }
+        }
         if (found == null) found = poll(cfg.retryMs, probe) // retry once
         // LLM fallback: also how unexpected popups get dismissed/bypassed. Capped per run so a screen that keeps
         // changing under the assistant ends in a question instead of a string of guesses.
@@ -142,7 +151,7 @@ class Replayer(
         val acted = if (isTap) device.tap(tree, node) else typeAndVerify(tree, node, sel, value)
         // Let the screen react before the next step looks for its target, or it may act on the old screen.
         if (acted && isTap) poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
-        return finish(i, step, acted, fallback)
+        return finish(i, step, acted, fallback, slots)
     }
 
     /**
@@ -311,18 +320,30 @@ class Replayer(
 
     private fun handover(i: Int, b: Boundary) = StepResult(i, false, error = "handed over: ${b.reason}", handover = b)
 
-    /** Post-action check: `expect` (package / text) must appear within the wait window. */
-    private suspend fun finish(i: Int, step: FlowStep, acted: Boolean, fallback: Boolean = false): StepResult {
+    /**
+     * Post-action check: `expect` (package / text) must appear within the wait window. `textContains` may hold a slot
+     * token ("{{item}}"), so it is resolved against the CURRENT slots — the check is "did the screen we landed on name
+     * what we actually asked for", which catches a tap that opened the wrong restaurant or dish.
+     */
+    private suspend fun finish(i: Int, step: FlowStep, acted: Boolean, fallback: Boolean = false, slots: Map<String, String> = emptyMap()): StepResult {
         if (!acted) return StepResult(i, false, fallback, "action failed")
         val e = step.expect
-        if (e.packageName.isEmpty() && e.textContains.isEmpty()) return StepResult(i, true, fallback)
+        val want = resolveSlots(e.textContains, slots)
+        if (e.packageName.isEmpty() && want.isEmpty()) return StepResult(i, true, fallback)
         val ok = waitFor { t ->
-            (e.packageName.isEmpty() || t.nodes.firstOrNull()?.packageName == e.packageName) &&
-                (e.textContains.isEmpty() || t.nodes.any {
-                    !it.password && (it.text.contains(e.textContains, true) || it.contentDesc.contains(e.textContains, true))
-                })
+            (e.packageName.isEmpty() || t.nodes.firstOrNull()?.packageName == e.packageName) && names(t.nodes, want)
         }
         return if (ok) StepResult(i, true, fallback) else StepResult(i, false, fallback, "expected screen not reached")
+    }
+
+    /** Does any caption carry [want]? Punctuation- and spacing-insensitive, so "Corn & Cheese" matches "corn and cheese". */
+    private fun names(nodes: List<UiNode>, want: String): Boolean {
+        if (want.isEmpty()) return true
+        val w = RowContext.norm(want)
+        return nodes.any { n ->
+            !n.password && (n.text.contains(want, true) || n.contentDesc.contains(want, true) ||
+                (w.isNotEmpty() && (RowContext.norm(n.text).contains(w) || RowContext.norm(n.contentDesc).contains(w))))
+        }
     }
 
     private suspend fun <T : Any> poll(timeoutMs: Long, probe: (LiveTree) -> T?): T? {

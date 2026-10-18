@@ -22,6 +22,10 @@ data class FlowStep(
     val expect: Expect = Expect(),
     /** Recording only: captions of the tapped element's row, so the backend can turn one into selector.near. */
     val context: List<String> = emptyList(),
+    /** Recording only: how many controls of this kind the demo screen showed; >1 means the row anchor is required. */
+    val candidates: Int = 0,
+    /** Recording only: captions of the screen this tap led to, so the backend can set expect.textContains. */
+    val screen: List<String> = emptyList(),
 )
 
 data class Flow(val intentKey: String, val description: String, val appPackage: String, val steps: List<FlowStep>)
@@ -69,7 +73,11 @@ object FlowJson {
         .put("value", step.value)
         .put("sensitive", step.sensitive)
         .put("expect", JSONObject().put("package", step.expect.packageName).put("textContains", step.expect.textContains))
-        .apply { if (step.context.isNotEmpty()) put("context", JSONArray(step.context)) }
+        .apply {
+            if (step.context.isNotEmpty()) put("context", JSONArray(step.context))
+            if (step.candidates > 0) put("candidates", step.candidates)
+            if (step.screen.isNotEmpty()) put("screen", JSONArray(step.screen))
+        }
 
     fun toJson(steps: List<FlowStep>): JSONArray = JSONArray().also { a -> steps.forEach { a.put(stepToJson(it)) } }
 }
