@@ -131,17 +131,14 @@ class TeachOnceGeneraliseTest {
         assertTrue("should have scrolled to reach it", menu.scrolls > 0)
     }
 
-    @Test fun `case 6 - item already in cart, and the only ADD on screen belongs to another dish`() {
-        // CHARACTERISATION TEST, NOT desired behaviour. The requested dish is in the cart (its row shows a stepper,
-        // no ADD), so the only ADD on screen is a DIFFERENT dish's. RowContext.of() climbs to the root when no second
-        // control of the same kind exists, so that ADD inherits the whole screen as its "row", the Margherita anchor
-        // matches, and the wrong dish is added while the run reports success. The "already in your cart" question
-        // (verified live on a real Zomato cart, where many ADDs are on screen) never gets a chance to fire here.
-        // Flip to: success=false, addedTo=null, error contains "already in your cart" once the root-walk is fixed.
+    @Test fun `case 6 - item already in cart is questioned, and another dish's ADD is never used instead`() {
+        // The requested dish is in the cart, so its row shows a stepper and the only ADD on screen is a DIFFERENT
+        // dish's. That ADD must not inherit the screen as its row (fix 1), and the run must say what it found.
         val menu = Menu(listOf(Dish("Margherita Pizza", inCart = 1), Dish("Farmhouse Pizza")))
         val r = replay(learnedAdd, menu, "Margherita pizza")
-        assertTrue("today this wrongly succeeds", r.success)
-        assertEquals("the wrong dish is added today", "Farmhouse Pizza", menu.addedTo)
+        assertTrue(!r.success)
+        assertNull("nothing may be added", menu.addedTo)
+        assertTrue(r.steps.last().error.orEmpty(), r.steps.last().error.orEmpty().contains("already in your cart, 1 of it"))
     }
 
     @Test fun `case 7 - a dish that is not on the menu asks a specific question and taps nothing`() {
@@ -154,15 +151,23 @@ class TeachOnceGeneraliseTest {
 
     // ---- the capture gap: the SAME task taught on a screen that showed only one ADD ----
 
-    @Test fun `case 8 - taught on a single-row screen, the flow has no slot and adds the FIRST dish`() {
-        // CHARACTERISATION TEST, NOT desired behaviour. Recorder.rowContext() only records the row when the same
-        // control is already on screen twice, so a demo done straight after a search (one result, one ADD) learns a
-        // bare resource id with slotRef=null. Replayed on a crowded menu it matches every ADD and takes the first,
-        // adding a dish nobody asked for and reporting success. Flip these assertions when the capture is fixed.
+    @Test fun `case 8 - taught on a single-row screen, an un-anchored ADD is refused, not guessed`() {
+        // Recorder.rowContext() only records the row when the control already repeats, so a demo done straight after
+        // a search (one result, one ADD) learns a bare resource id with no slot. Replayed on a crowded menu that id
+        // matches every row's ADD: several different controls, nothing to choose between them, so it asks (fix 4).
+        // Capturing the row every time is a separate Recorder fix and needs an APK rebuild.
         val menu = Menu(listOf(Dish("Margherita Pizza"), Dish("Farmhouse Pizza")))
         val r = replay(learnedAddNoRow, menu, "Farmhouse pizza")
-        assertTrue("today this wrongly succeeds", r.success)
-        assertEquals("the wrong dish is added today", "Margherita Pizza", menu.addedTo)
+        assertTrue(!r.success)
+        assertNull("must not add the first dish it happens to find", menu.addedTo)
+    }
+
+    @Test fun `case 9 - one ADD on screen is still used when it really is the requested dish`() {
+        // The conservative row must not over-refuse: a single search result is the common Zomato shape.
+        val menu = Menu(listOf(Dish("Farmhouse Pizza")))
+        val r = replay(learnedAdd, menu, "Farmhouse pizza")
+        assertTrue(r.steps.toString(), r.success)
+        assertEquals("Farmhouse Pizza", menu.addedTo)
     }
 
     private companion object { const val PKG = "com.application.zomato" }

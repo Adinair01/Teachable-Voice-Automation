@@ -36,6 +36,8 @@ data class Selector(
 }
 
 object SelectorMatcher {
+    private const val MAX_UP = 8
+
     /**
      * Best match in the flat node list, or null. Password nodes never match by text.
      * [textContains] switches text matching from equality to substring (used for slot-bound targets,
@@ -69,16 +71,49 @@ object SelectorMatcher {
      * Target lookup for one replay step. For taps, clickable nodes are tried first: the same caption often appears
      * twice (a tab's icon and its label) and only one of them sits on a clickable branch, so plain matching can pick
      * the dead one and "succeed" without anything happening. Slot-bound taps also fall back to "contains the value".
+     *
+     * A TAP is never acted on while several DIFFERENT controls match it equally well. Matching used to end in
+     * "take the first hit", so a selector that named no single control (an id every row reuses, "ADD") tapped
+     * whatever happened to come first in the tree — the wrong row, silently, reported as success. Hits that share
+     * one clickable node are the same control seen twice and are still fine to act on; hits spread across several
+     * clickable controls are a genuine ambiguity, and the caller must ask rather than guess. [tree] carries the
+     * whole screen when [nodes] is a filtered pool, since that is what the structure is read from.
      */
-    fun findTarget(nodes: List<UiNode>, sel: Selector, slotValue: String? = null, forTap: Boolean = false): UiNode? {
+    fun findTarget(
+        nodes: List<UiNode>, sel: Selector, slotValue: String? = null, forTap: Boolean = false,
+        tree: List<UiNode> = nodes,
+    ): UiNode? {
         val pools = if (forTap) listOf(nodes.filter { it.clickable }, nodes) else listOf(nodes)
+        val parent by lazy { RowContext.parents(tree) }
+        fun pick(hits: List<UiNode>): UiNode? =
+            hits.firstOrNull()?.takeIf { !forTap || oneControl(tree, parent, hits) }
+        val byValue = { pool: List<UiNode> ->
+            if (slotValue.isNullOrEmpty()) emptyList() else findAll(pool, Selector(text = slotValue), textContains = true)
+        }
         for (pool in pools) {
-            find(pool, sel)?.let { return it }
-            if (forTap && !slotValue.isNullOrEmpty()) {
-                find(pool, Selector(text = slotValue), textContains = true)?.let { return it }
+            val hits = findAll(pool, sel)
+            if (hits.isNotEmpty()) {
+                pick(hits)?.let { return it }
+                // The selector alone is ambiguous; only the slot value may still single one control out.
+                return pick(byValue(pool))
             }
+            if (forTap) pick(byValue(pool))?.let { return it }
         }
         return null
+    }
+
+    /** Hits that resolve to one clickable node are one control seen twice; more than one is a real ambiguity. */
+    private fun oneControl(tree: List<UiNode>, parent: IntArray, hits: List<UiNode>): Boolean =
+        hits.size <= 1 || hits.map { controlOf(tree, parent, it) }.distinct().size == 1
+
+    /** The nearest clickable node at or above [n] — the thing a tap would actually hit. */
+    private fun controlOf(tree: List<UiNode>, parent: IntArray, n: UiNode): Int {
+        var cur = n
+        repeat(MAX_UP) {
+            if (cur.clickable) return cur.index
+            cur = tree.getOrNull(parent.getOrElse(cur.index) { -1 }) ?: return cur.index
+        }
+        return cur.index
     }
 
     /**
@@ -90,7 +125,7 @@ object SelectorMatcher {
         // A tap needs something clickable at or above the node: a caption echoed in a plain label (the search box
         // repeating "Domino's pizza") would otherwise be "tapped" to no effect.
         val pool = if (forTap) tappable(nodes) else nodes
-        if (sel.near.isEmpty()) return findTarget(pool, sel, slotValue, forTap)
+        if (sel.near.isEmpty()) return findTarget(pool, sel, slotValue, forTap, tree = nodes)
         val same = findAll(pool, sel.copy(near = "")).toSet()
         return RowContext.pick(nodes, same.toList(), sel.near, slotValue) { it in same }
     }

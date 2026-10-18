@@ -24,16 +24,30 @@ object RowContext {
     fun subtree(nodes: List<UiNode>, root: UiNode): List<UiNode> =
         listOf(root) + nodes.drop(root.index + 1).takeWhile { it.depth > root.depth }
 
-    /** Visible texts of the row holding [node]; [sameKind] says which nodes count as "another one of these". */
-    fun of(nodes: List<UiNode>, node: UiNode, sameKind: (UiNode) -> Boolean, parent: IntArray = parents(nodes)): List<String> {
+    /**
+     * The row holding [node]. The climb stops at whichever comes first: another control of the same kind one level
+     * up (the normal case in a list), the scrollable list itself, or the root.
+     *
+     * The last two bounds matter when the control does NOT repeat — a dish already in the cart leaves a single ADD
+     * on screen. Without them the climb ran all the way to the root, so "the row" became the whole screen and ANY
+     * caption on it satisfied the anchor: asking for one dish could add a different one. Keeping the row at the
+     * outermost non-root, non-list ancestor means an anchor that is not really in the row simply fails to match,
+     * and the caller asks instead of tapping.
+     */
+    fun rowOf(nodes: List<UiNode>, node: UiNode, sameKind: (UiNode) -> Boolean, parent: IntArray = parents(nodes)): UiNode {
         var row = node
         for (up in 0 until MAX_UP) {
             val p = nodes.getOrNull(parent[row.index]) ?: break
             if (subtree(nodes, p).any { it.index != node.index && sameKind(it) }) break
+            if (p.scrollable || parent[p.index] < 0) break // the list, and the screen itself, are never a row
             row = p
         }
-        return texts(nodes, row)
+        return row
     }
+
+    /** Visible texts of the row holding [node]; [sameKind] says which nodes count as "another one of these". */
+    fun of(nodes: List<UiNode>, node: UiNode, sameKind: (UiNode) -> Boolean, parent: IntArray = parents(nodes)): List<String> =
+        texts(nodes, rowOf(nodes, node, sameKind, parent))
 
     /**
      * Picks the candidate whose row names [near] (whole caption, normalised: "{{item}} Pizza" -> "Farmhouse Pizza"),

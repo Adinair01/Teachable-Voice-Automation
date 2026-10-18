@@ -3,12 +3,12 @@ package com.tva.teachable.core
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Diagnostic: how far up does RowContext.of() walk when only ONE control of that kind is on screen? */
+/** The row of a control that does NOT repeat must stay a row, not become the whole screen. */
 class RowContextRootTest {
     private fun n(i: Int, d: Int, text: String = "", desc: String = "", click: Boolean = false) =
         UiNode(i, d, "p", "", text, desc, "", "", click, false, false, false)
 
-    @Test fun singleControlMakesTheWholeScreenItsRow() {
+    @Test fun aSingleControlsRowIsNotTheWholeScreen() {
         // Margherita row (already in cart: stepper, no ADD) + Farmhouse row (the only ADD on screen).
         val nodes = listOf(
             n(0, 0),
@@ -21,10 +21,9 @@ class RowContextRootTest {
 
         // The question asked of the screen: "ADD in the Margherita Pizza row".
         val picked = RowContext.pick(nodes, adds, "Margherita Pizza", "Margherita pizza") { it in adds.toSet() }
-        // CHARACTERISATION, NOT desired behaviour. of() climbs while no OTHER control of the same kind is in the
-        // subtree; with a single control on screen nothing stops it, so "the row" becomes the root and the anchor
-        // matches a caption belonging to a different dish. Should be null (refuse); is Farmhouse's ADD today.
-        assertEquals("documents the root-walk bug: wrong dish chosen", 8, picked?.index)
-        assertEquals("the 'row' is really the whole screen", listOf("Margherita Pizza", "\u2212", "1", "+", "Farmhouse Pizza", "ADD"), row)
+        // The climb is bounded by the root, so the only ADD keeps its own row and a caption from the other dish's
+        // row no longer satisfies the anchor: asking for Margherita can never add Farmhouse.
+        assertEquals("the row is the dish's own row", listOf("Farmhouse Pizza", "ADD"), row)
+        assertEquals("a different dish's anchor must be refused", null, picked)
     }
 }
