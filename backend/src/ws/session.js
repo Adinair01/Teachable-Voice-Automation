@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { Flow } from '../models/Flow.js';
 import { RunLog } from '../models/RunLog.js';
 import { extractIntent } from '../prompts/intent.js';
-import { normaliseSlots, withDefaults } from '../prompts/slots.js';
+import { normaliseSlots, replaySlots, askFor } from '../prompts/slots.js';
 import { matchFlow } from '../prompts/matchFlow.js';
 import { pastPhrasings } from '../services/phrasings.js';
 import { correctionInput, plan, apply, describe, isYes, isNo } from '../services/correction.js';
@@ -111,9 +111,12 @@ export class Session {
     }
     if (isStatusQuery(text)) return this.#reportLastRun();
     if (this.pending) {
-      const { flow, slots, slot } = this.pending; this.pending = null;
+      const { flow, slots, slot, utterance } = this.pending; this.pending = null;
       if (CANCEL.test(text)) return this.say('Okay, I cancelled that.');
-      return this.#replay(flow, text, { ...slots, [slot]: text.trim() });
+      // The answer fills the asked-for slot only ("Margherita please" -> "Margherita"). The ORIGINAL command is what gets
+      // logged against the flow: the bare answer is not a way of phrasing the task and must not be learned as one.
+      const answer = normaliseSlots({ [slot]: text })[slot] ?? text.trim();
+      return this.#replay(flow, utterance ?? text, { ...slots, [slot]: answer });
     }
     const app = resolveApp(parseOpenApp(text), this.apps);
     if (app) {
@@ -130,7 +133,7 @@ export class Session {
       const flow = flows.find((f) => String(f._id) === m.flowId);
       const slots = normaliseSlots(m.slots);
       if (m.clarify) { // T13: never silently pick for the user
-        this.pending = { flow, slots, slot: m.clarify.slot };
+        this.pending = { flow, slots, slot: m.clarify.slot, utterance: text };
         return this.say(m.clarify.question);
       }
       return this.#replay(flow, text, slots);
@@ -146,8 +149,17 @@ export class Session {
     return this.say(TEACH_PROMPT);
   }
 
+  /**
+   * The flow supplies the STRUCTURE; the values come from THIS utterance. They are put in the taught shape ("seven" ->
+   * "7"), a missing subject is asked for rather than silently copied from the demonstration, and only then do the
+   * remaining gaps fall back to the taught example (the place an order comes from).
+   */
   #replay(flow, utterance, given) {
-    const slots = withDefaults(given, flow.slots, IMPLIED_SLOTS.map((s) => s.name));
+    const { ask, slots } = replaySlots(given, flow.slots, IMPLIED_SLOTS.map((s) => s.name));
+    if (ask) {
+      this.pending = { flow, slots, slot: ask.name, utterance };
+      return this.say(askFor(ask));
+    }
     this.send({ type: 'replay', flowId: String(flow._id), utterance, flow, slots });
     return this.say('Okay, doing that now.');
   }

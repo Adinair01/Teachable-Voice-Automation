@@ -182,5 +182,20 @@ class TeachOnceGeneraliseTest {
         assertTrue("should have scrolled to reach it", menu.scrolls > 0)
     }
 
+    @Test fun `case 11 - the stored Farmhouse flow replayed for Margherita adds Margherita`() {
+        // Steps 7-8 of the flow taught on 2026-10-19 ("Order a Farmhouse pizza from Domino's"), exactly as stored: type
+        // {{item}} into the menu search, then the ADD anchored to {{item}}'s row. Replayed with the NEW value, on a menu
+        // listing both dishes, Farmhouse first. The taught value must play no part.
+        val menu = Menu(listOf(Dish("Farmhouse Pizza", "₹279"), Dish("Margherita Pizza", "₹119"), Dish("Double Cheese Margherita Pizza")))
+        val storedAdd = FlowStep(StepType.TAP, Selector(contentDesc = "ADD", className = "android.view.View", near = "{{item}}"), slotRef = "item")
+        val r = replay(storedAdd, menu, "Margherita pizza")
+        assertTrue(r.steps.toString(), r.success)
+        assertEquals("Margherita Pizza", menu.addedTo)
+        // ...and the exact taught wording still adds Farmhouse.
+        val again = Menu(listOf(Dish("Farmhouse Pizza", "₹279"), Dish("Margherita Pizza", "₹119")))
+        assertTrue(replay(storedAdd, again, "Farmhouse pizza").success)
+        assertEquals("Farmhouse Pizza", again.addedTo)
+    }
+
     private companion object { const val PKG = "com.application.zomato" }
 }
