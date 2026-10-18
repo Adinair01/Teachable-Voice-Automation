@@ -75,9 +75,12 @@ class Replayer(
     private var llmPicks = 0
     private var asked = 0
     private val corrections = ArrayList<Correction>()
+    /** The text the previous step just typed, and where: lets the NEXT step ask for one retry if the typing did not take. */
+    private data class Typed(val index: Int, val sel: Selector, val value: String)
+    private var lastTyped: Typed? = null
 
     suspend fun run(flow: Flow, slots: Map<String, String>): RunResult {
-        appPackage = flow.appPackage; llmPicks = 0; asked = 0; corrections.clear()
+        appPackage = flow.appPackage; llmPicks = 0; asked = 0; corrections.clear(); lastTyped = null
         val results = ArrayList<StepResult>()
         for ((i, step) in flow.steps.withIndex()) {
             val next = flow.steps.getOrNull(i + 1)
@@ -197,6 +200,7 @@ class Replayer(
             // a wrong guess here adds the wrong dish.
             // Asked before scrolling: once the list has moved on, the item's own row (and its stepper) is out of view.
             alreadyInCart(step, slots)?.let { return StepResult(i, false, error = it, cause = StuckCause.CART_CONFLICT) }
+            if (found == null) found = retypedOnce(i, probe)
             repeat(cfg.scrollTries) {
                 if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, probe)
             }
@@ -209,6 +213,7 @@ class Replayer(
         // found by the same selector, so nothing is ever tapped on a guess. A brief wait per scroll: the list has
         // settled long before the full retry window.
         if (found == null && sel.near.isEmpty() && (isTap || !slotValue.isNullOrEmpty())) {
+            if (found == null) found = retypedOnce(i, probe)
             repeat(cfg.scrollTries) {
                 if (found == null && device.scroll(device.tree())) found = poll(minOf(cfg.retryMs, SCROLL_SETTLE_MS), probe)
             }
@@ -224,13 +229,47 @@ class Replayer(
                 ?.takeIf { plausible(step, sel, it) }
                 ?.let { found = tree to it; fallback = true; llmPicks++ }
         }
-        val (tree, node) = found ?: return stuckResult(i, step, sel, targetLabel(step, sel))
+        var (tree, node) = found ?: return stuckResult(i, step, sel, targetLabel(step, sel))
         if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
-        val before = signature(tree)
-        val acted = if (isTap) device.tap(tree, node) else typeAndVerify(tree, node, sel, value)
+        var before = signature(tree)
+        var acted = if (isTap) device.tap(tree, node) else typeAndVerify(tree, node, sel, value)
+        if (!acted) {
+            // A node can go stale between being read and acted on — a suggestion list that is still refreshing as it
+            // loads (seen live: the restaurant suggestion was found, then refused the click). Look again, once, and
+            // run the same guards on whatever is found now.
+            delay(cfg.pollMs)
+            poll(cfg.retryMs, probe)?.let { (t2, n2) ->
+                if (isTap) ScreenGuard.action(t2.nodes, n2)?.let { return handover(i, it) }
+                tree = t2; node = n2; before = signature(t2)
+                acted = if (isTap) device.tap(t2, n2) else typeAndVerify(t2, n2, sel, value)
+            }
+        }
+        if (!acted) return couldntAct(i, step, sel, isTap)
+        if (!isTap) lastTyped = Typed(i, sel, value) else lastTyped = null
         // Let the screen react before the next step looks for its target, or it may act on the old screen.
-        if (acted && isTap) poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
+        if (isTap) poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
         return finish(i, step, acted, fallback, slots)
+    }
+
+    /**
+     * The step before this one typed into a field and this step's target is still missing: the text may have landed in the
+     * field without the app acting on it (a search that never ran — seen live on Zomato, where entering the same text by
+     * hand a moment later worked). Clear the field and enter the value once more, then wait again. Once per step, only
+     * right after a typing step, only into the same field, and it presses nothing: it cannot loop or wander.
+     */
+    private suspend fun retypedOnce(i: Int, probe: (LiveTree) -> Pair<LiveTree, UiNode>?): Pair<LiveTree, UiNode>? {
+        val typed = lastTyped?.takeIf { it.index == i - 1 && it.value.isNotBlank() } ?: return null
+        lastTyped = null // one retry per typing step, whatever happens next
+        val t = device.tree()
+        val field = SelectorMatcher.target(t.nodes, typed.sel, null, forTap = false) ?: return null
+        if (field.password) return null
+        android.util.Log.w("TVA", "replay: nothing followed the typed text, entering it once more")
+        if (!device.type(t, field, "")) return null
+        delay(cfg.pollMs)
+        val t2 = device.tree()
+        val again = SelectorMatcher.target(t2.nodes, typed.sel, null, forTap = false) ?: return null
+        if (!device.type(t2, again, typed.value)) return null
+        return poll(cfg.waitMs, probe)
     }
 
     /**
@@ -370,6 +409,16 @@ class Replayer(
         if (waitFor(isChosen)) return StepResult(i, true)
         if (entry(device.tree()) != null) device.back() // still in the picker: close it rather than leave the user there
         return StepResult(i, false, error = "the app didn't switch to your \"$label\" address, it may be outside the delivery area")
+    }
+
+    /** The control was found and acting on it failed twice: say so specifically and ask, instead of a bare "action failed". */
+    private fun couldntAct(i: Int, step: FlowStep, sel: Selector, isTap: Boolean): StepResult {
+        val shows = ScreenSummary.of(device.tree().nodes)
+        return StepResult(
+            i, false,
+            error = "I found ${targetLabel(step, sel)} but couldn't ${if (isTap) "tap" else "type into"} it. This screen shows $shows. What should I do?",
+            cause = if (step.slotRef != null) StuckCause.SLOT_ABSENT else StuckCause.MISSING_TARGET,
+        )
     }
 
     /** Anything that could mean the screen is asking the user to make a cart decision: dismissing it blindly would make it for them. */

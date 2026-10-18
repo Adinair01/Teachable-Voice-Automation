@@ -378,5 +378,115 @@ class ReplayerAskTest {
         assertTrue(r.steps.last().error.orEmpty(), r.steps.last().error.orEmpty().startsWith("I did every step, but I'm not on the cart"))
     }
 
+    // ---------- typing that did not take ----------
+
+    /**
+     * A search box that fills in on the first entry but only RUNS the search on the second — what the live Zomato menu did
+     * (a retype by hand moments later worked). Results (a row with an ADD) appear only after the field has been cleared
+     * and filled again.
+     */
+    private class StubbornSearch : Device {
+        var text = ""
+        private var cleared = false
+        private var results = false
+        val typed = mutableListOf<String>()
+        val addedTo = mutableListOf<String>()
+        override fun tree(): LiveTree {
+            val out = ArrayList<UiNode>()
+            out += UiNode(0, 0, PKG, "", "", "", "", "", false, false, false, false)
+            out += UiNode(1, 1, PKG, "$PKG:id/edittext", text, "", "android.widget.EditText", "", true, true, false, false)
+            if (results) {
+                out += UiNode(2, 1, PKG, "", "", "", "", "", true, false, false, false)
+                out += UiNode(3, 2, PKG, "", "Margherita Pizza", "", "", "", false, false, false, false)
+                out += UiNode(4, 2, PKG, "$PKG:id/add", "", "ADD", "", "", true, false, false, false)
+            }
+            return LiveTree(out, emptyList())
+        }
+        override fun launch(packageName: String) = true
+        override fun tap(tree: LiveTree, node: UiNode) = true.also { if (node.contentDesc == "ADD") addedTo += "Margherita Pizza" }
+        override fun type(tree: LiveTree, node: UiNode, value: String): Boolean {
+            typed += value; text = value
+            if (value.isEmpty()) cleared = true else if (cleared) results = true
+            return true
+        }
+        override fun scroll(tree: LiveTree) = false
+        override fun back() = true
+    }
+
+    private val typeThenAdd = flow(
+        FlowStep(StepType.TYPE, Selector(resourceId = "$PKG:id/edittext"), value = "{{item}}", slotRef = "item"),
+        FlowStep(StepType.TAP, Selector(contentDesc = "ADD", near = "{{item}}"), slotRef = "item"),
+    )
+
+    @Test fun typingThatDidNotTakeIsRetypedOnceAndTheRunContinues() {
+        val phone = StubbornSearch()
+        val asker = Scripted()
+        val r = runBlocking { Replayer(phone, null, cfg = fast, asker = asker).run(typeThenAdd, mapOf("item" to "Margherita pizza")) }
+        assertTrue(r.steps.toString(), r.success)
+        assertEquals("entered, cleared, entered again - exactly once more", listOf("Margherita pizza", "", "Margherita pizza"), phone.typed)
+        assertEquals(listOf("Margherita Pizza"), phone.addedTo)
+        assertEquals("it fixed itself without bothering anyone", 0, asker.asked.size)
+    }
+
+    @Test fun theRetypeIsBoundedAndAFieldThatNeverFiltersStillEndsInAQuestion() {
+        // Nothing the field does ever produces results: one retype, then the normal specific question. No loop.
+        val phone = object : Device by StubbornSearch() {
+            val inner = StubbornSearch()
+            val typed = mutableListOf<String>()
+            override fun tree() = inner.tree()
+            override fun type(tree: LiveTree, node: UiNode, value: String): Boolean { typed += value; inner.text = value; return true }
+        }
+        val asker = Scripted("stop")
+        val r = runBlocking { Replayer(phone, null, cfg = fast, asker = asker).run(typeThenAdd, mapOf("item" to "Margherita pizza")) }
+        assertFalse(r.success)
+        assertEquals(1, asker.asked.size)
+        assertEquals(listOf("Margherita pizza", "", "Margherita pizza"), phone.typed)
+    }
+
+    // ---------- a click that does not land ----------
+
+    /** One clickable "Domino's Pizza" suggestion whose first [failures] clicks are refused, like a node that went stale. */
+    private class FlakyClick(private var failures: Int) : Device {
+        var attempts = 0
+        var clicked = false
+        override fun tree(): LiveTree = LiveTree(
+            listOf(
+                UiNode(0, 0, PKG, "", "", "", "", "", false, false, false, false),
+                UiNode(1, 1, PKG, "", "Domino's Pizza", "", "", "", true, false, false, false),
+            ),
+            emptyList(),
+        )
+        override fun launch(packageName: String) = true
+        override fun tap(tree: LiveTree, node: UiNode): Boolean { attempts++; return if (failures > 0) { failures--; false } else true.also { clicked = true } }
+        override fun type(tree: LiveTree, node: UiNode, value: String) = true
+        override fun scroll(tree: LiveTree) = false
+        override fun back() = true
+    }
+
+    private val tapRestaurant = flow(FlowStep(StepType.TAP, Selector(text = "{{restaurant}} Pizza"), slotRef = "restaurant"))
+
+    @Test fun aClickThatDoesNotLandIsRetriedOnceBeforeAnythingIsReported() {
+        // Found live on Zomato: the suggestion was found, the click was refused (a list still refreshing), and the
+        // run died with a bare "action failed" after six seconds.
+        val phone = FlakyClick(failures = 1)
+        val asker = Scripted()
+        val r = runBlocking { Replayer(phone, null, cfg = fast, asker = asker).run(tapRestaurant, mapOf("restaurant" to "Domino's")) }
+        assertTrue(r.steps.toString(), r.success)
+        assertEquals(2, phone.attempts)
+        assertEquals(0, asker.asked.size)
+    }
+
+    @Test fun aClickThatNeverLandsIsAQuestionNotABareFailure() {
+        val phone = FlakyClick(failures = 99)
+        val asker = Scripted("stop")
+        val r = runBlocking { Replayer(phone, null, cfg = fast, asker = asker).run(tapRestaurant, mapOf("restaurant" to "Domino's")) }
+        assertFalse(r.success)
+        assertEquals("one retry, not a loop", 2, phone.attempts)
+        val said = asker.asked.single().spoken
+        assertTrue(said, said.contains("I found \"Domino's Pizza\" but couldn't tap it"))
+        assertTrue(said, said.contains("What should I do?"))
+        assertFalse("never the old generic message", r.steps.last().error.orEmpty().contains("action failed"))
+    }
+
     private companion object { const val PKG = "com.application.zomato" }
 }

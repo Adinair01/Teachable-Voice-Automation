@@ -90,4 +90,20 @@ class ScreenGuardTest {
         val covered = screen(nodes = arrayOf(t("Unlock Flat \u20b975 OFF"), t("Item total"), t("Grand Total")))
         assertEquals(BoundaryKind.PAYMENT, ScreenGuard.readyToPay(covered)?.kind)
     }
+
+    @Test fun aCartThatStillNeedsAnAddressIsWhereTheFlowEnds() {
+        // Real captions from the Zomato cart on 2026-10-18: no "PAY USING" or "Bill details" yet, because no delivery address
+        // is chosen, so the bottom bar reads "Select address at next step". It is still the cart, and the user's turn.
+        val cart = screen(nodes = arrayOf(
+            t("Margherita Pizza"), t("New Hand Tossed, Regular"), t("Add more items"),
+            t("Unlock 20% OFF up to \u20b950"), t("Zomato Money Balance: \u20b90"), t("Select address at next step"),
+        ))
+        assertEquals(BoundaryKind.PAYMENT, ScreenGuard.readyToPay(cart)?.kind)
+    }
+
+    @Test fun theMenuPageBehindTheCartIsNotMistakenForOne() {
+        // The same app keeps the menu in the tree under the cart; on its own it must not read as a checkout.
+        val menu = screen(nodes = arrayOf(t("Domino's Pizza"), t("1 item added"), t("Continue"), t("Add items worth \u20b980 or more to unlock")))
+        assertNull(ScreenGuard.readyToPay(menu))
+    }
 }

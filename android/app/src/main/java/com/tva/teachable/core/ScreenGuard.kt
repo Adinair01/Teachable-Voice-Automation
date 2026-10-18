@@ -68,7 +68,9 @@ object ScreenGuard {
     // What a cart or checkout screen shows about the money: the corroboration that a commit caption really is a pay
     // bar. Also stands alone, because a coupon popup can cover the pay bar while the bill is still listed behind it.
     private val CHECKOUT_EVIDENCE = Regex(
-        "pay using|bill details|item total|grand total|to pay|order total|delivery (fee|charge)|taxes and charges|place order",
+        "pay using|bill details|item total|grand total|to pay|order total|delivery (fee|charge)|taxes and charges|place order" +
+            // The cart before a delivery address is chosen (seen live): no pay bar yet, but the address step IS the hand-over.
+            "|(select|add) address at next step|zomato money balance",
         RegexOption.IGNORE_CASE,
     )
 
