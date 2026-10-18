@@ -78,7 +78,13 @@ object RowContext {
      * because a menu writes "Corn & Cheese Pizza" while the user says "corn and cheese pizza"; dropping the "&"
      * instead would leave the two forms permanently unequal.
      */
-    fun norm(s: String) = s.lowercase().replace("&", " and ").filter { it.isLetterOrDigit() }
+    fun norm(s: String) = PRICE.replace(s.lowercase().replace("&", " and "), " ").filter { it.isLetterOrDigit() }
+
+    // A money amount in a caption belongs to the moment it was recorded, not to the control: the button that was
+    // "Add item ₹114" during the demonstration reads "Add item ₹149" for another size, another city or after a price
+    // change. Dropping the amount leaves the part that actually names the control. Digits inside a NAME survive,
+    // because only a currency-prefixed number is removed ("Big Big 6in1 Pizza" keeps its 6 and 1).
+    private val PRICE = Regex("""(?:\u20b9|rs\.?|inr|\$)\s*[\d,]+(?:\.\d+)?""", RegexOption.IGNORE_CASE)
 
     private fun texts(nodes: List<UiNode>, row: UiNode) = subtree(nodes, row)
         .filter { !it.password }

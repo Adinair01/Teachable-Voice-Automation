@@ -65,10 +65,28 @@ object ScreenGuard {
     fun actionText(text: String): Boundary? =
         if (COMMIT.containsMatchIn(text)) Boundary(BoundaryKind.PAYMENT, "would tap \"${text.trim().take(40)}\"") else null
 
-    /** A pay / place-order control is on screen: where an ordering flow ends and the user takes over. */
-    fun readyToPay(nodes: List<UiNode>): Boundary? =
-        nodes.firstOrNull { !it.editable && actionText(visible(it)) != null }
-            ?.let { Boundary(BoundaryKind.PAYMENT, "ready to pay: \"${visible(it).take(40)}\"") }
+    // What a cart or checkout screen shows about the money: the corroboration that a commit caption really is a pay
+    // bar. Also stands alone, because a coupon popup can cover the pay bar while the bill is still listed behind it.
+    private val CHECKOUT_EVIDENCE = Regex(
+        "pay using|bill details|item total|grand total|to pay|order total|delivery (fee|charge)|taxes and charges|place order",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * The screen where an ordering flow ends and the user takes over.
+     *
+     * A commit caption on its own is NOT enough. Zomato's home feed carries an advertisement captioned "Order Now ›"
+     * (inside a clickable banner, so "is it tappable" does not separate them either), and treating that as the pay bar
+     * let a run that never reached a cart report the order as ready to pay. The screen must also show the trappings of
+     * a checkout. This is a success criterion, not the safety boundary — [screen] and [action] are what refuse to
+     * touch a payment screen, and they are unchanged.
+     */
+    fun readyToPay(nodes: List<UiNode>): Boundary? {
+        val texts = nodes.filter { !it.editable }.map(::visible).filter { it.isNotBlank() }
+        if (texts.none { CHECKOUT_EVIDENCE.containsMatchIn(it) }) return null
+        val commit = texts.firstOrNull { actionText(it) != null }
+        return Boundary(BoundaryKind.PAYMENT, commit?.let { "ready to pay: \"${it.take(40)}\"" } ?: "order ready for review")
+    }
 
     // Nodes are a pre-order walk, so a node's subtree is the run of following nodes that sit deeper than it.
     private fun subtree(nodes: List<UiNode>, node: UiNode) =

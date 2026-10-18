@@ -66,15 +66,10 @@ class Replayer(
         val ordering = flow.steps.any { it.type == StepType.SET_QUANTITY || it.type == StepType.CHOOSE_ADDRESS }
         // A popup (a coupon offer) can hide the pay bar; the flow still ended where it was taught to stop, before paying.
         val handover = ScreenGuard.screen(end) ?: ScreenGuard.readyToPay(end)
-            ?: if (ordering) poll(cfg.waitMs) { ScreenGuard.readyToPay(it.nodes) } ?: cartHandover(end)
-            else null
+            ?: if (ordering) poll(cfg.waitMs) { ScreenGuard.readyToPay(it.nodes) } else null
         if (ordering && handover == null) return notAtCart(flow, results)
         return RunResult(true, results, handover = handover)
     }
-
-    /** The pay bar can be hidden by a popup; the cart's own captions still prove this is where the order ends. */
-    private fun cartHandover(nodes: List<UiNode>): Boundary? =
-        if (nodes.any { CART_EVIDENCE.containsMatchIn(it.text + " " + it.contentDesc) }) Boundary(BoundaryKind.PAYMENT, "order ready for review") else null
 
     private fun notAtCart(flow: Flow, results: List<StepResult>): RunResult {
         val err = "I did every step, but I'm not on the cart or checkout screen, so I can't say the order is ready. This screen shows ${ScreenSummary.of(device.tree().nodes)}."
@@ -92,7 +87,7 @@ class Replayer(
         val value = resolveSlots(step.value, slots)
         val slotValue = step.slotRef?.let { slots[it] }?.trim().orEmpty()
         return when (step.type) {
-            StepType.LAUNCH -> finish(i, step, device.launch(value) && waitFor { it.nodes.firstOrNull()?.packageName == value }, slots = slots)
+            StepType.LAUNCH -> launched(i, step, value, slots)
             StepType.WAIT -> { delay(value.toLongOrNull() ?: 500); StepResult(i, true) }
             StepType.BACK -> finish(i, step, device.back(), slots = slots)
             StepType.SCROLL -> finish(i, step, device.scroll(device.tree()), slots = slots)
@@ -101,6 +96,27 @@ class Replayer(
             StepType.SET_QUANTITY -> if (slotValue.isEmpty()) StepResult(i, true) else quantity(i, step, slots, slotValue)
             StepType.CHOOSE_ADDRESS -> if (slotValue.isEmpty()) StepResult(i, true) else address(i, slotValue)
         }
+    }
+
+    /**
+     * Opens the app and waits until it is really showing its start screen.
+     *
+     * "Is this package in front" is not enough: when the app is ALREADY in front on some other screen — a restaurant
+     * page from a minute ago — that is true the instant it is asked, so the flow used to race on and look for the home
+     * search bar on the wrong screen. The launch clears the task, so the screen genuinely changes; we wait for that,
+     * then for it to settle.
+     */
+    private suspend fun launched(i: Int, step: FlowStep, pkg: String, slots: Map<String, String>): StepResult {
+        val before = device.tree()
+        val wasInFront = before.nodes.firstOrNull()?.packageName == pkg
+        val beforeSig = signature(before)
+        if (!device.launch(pkg)) return StepResult(i, false, error = "I couldn't open that app.")
+        val arrived = waitFor { t ->
+            t.nodes.firstOrNull()?.packageName == pkg && (!wasInFront || signature(t) != beforeSig)
+        }
+        // Even a cold start paints in stages; the first step must not read a half-built screen.
+        if (arrived) awaitStable()
+        return finish(i, step, arrived, slots = slots)
     }
 
     private suspend fun targeted(i: Int, step: FlowStep, next: FlowStep?, slots: Map<String, String>, value: String): StepResult {
@@ -400,8 +416,6 @@ class Replayer(
         // Benign pass-through controls an upsell/interstitial can sit behind, on top of the cart ("Add items worth ₹X…
         // Continue"). Only ever tapped when ScreenGuard clears it, so a genuine "Continue to pay" is still handed over.
         val INTERSTITIAL = Regex("^(continue|proceed|close|skip|not now|maybe later|no thanks|got it|ok|okay|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
-        // Words a cart or checkout screen shows even when a popup hides its pay bar.
-        val CART_EVIDENCE = Regex("pay using|place order|bill details|to pay|grand total|item total", RegexOption.IGNORE_CASE)
         const val TYPE_TRIES = 3
         const val QUIET_MS = 600L
         val SLOT_TOKEN = Regex("\\{\\{(\\w+)\\}\\}")

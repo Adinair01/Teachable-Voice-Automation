@@ -71,4 +71,23 @@ class ScreenGuardTest {
         assertEquals(BoundaryKind.PAYMENT, ScreenGuard.action(n, n[1])?.kind)
         assertNull(ScreenGuard.action(n, n[3]))
     }
+
+    @Test fun anAdvertisementSayingOrderNowIsNotAPayBar() {
+        // Real Zomato home feed: a banner captioned "Order Now ›", inside a clickable ad container, twenty levels
+        // deep. Before this, a run that never reached a cart could end here and report the order as ready to pay.
+        val home = screen(nodes = arrayOf(t("Kaverappa Layout"), t("Search \"chicken\""), t("Pizza"), t("Order Now \u203a")))
+        assertNull(ScreenGuard.readyToPay(home))
+        assertNull(ScreenGuard.screen(home))
+    }
+
+    @Test fun aRealCheckoutScreenIsStillRecognised() {
+        val checkout = screen(nodes = arrayOf(t("PAY USING"), t("Paytm UPI"), t("Bill details"), t("Order Now")))
+        assertEquals(BoundaryKind.PAYMENT, ScreenGuard.readyToPay(checkout)?.kind)
+    }
+
+    @Test fun aBillStillShowingBehindAPopupCountsAsReadyToPay() {
+        // The coupon sheet covers the pay bar, but the bill is listed behind it: the order IS ready for review.
+        val covered = screen(nodes = arrayOf(t("Unlock Flat \u20b975 OFF"), t("Item total"), t("Grand Total")))
+        assertEquals(BoundaryKind.PAYMENT, ScreenGuard.readyToPay(covered)?.kind)
+    }
 }

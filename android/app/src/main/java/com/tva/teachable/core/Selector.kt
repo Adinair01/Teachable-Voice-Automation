@@ -37,11 +37,8 @@ data class Selector(
 
 object SelectorMatcher {
     private const val MAX_UP = 8
-    const val ID_TIER = 0
-    const val TEXT_TIER = 1
-    const val DESC_TIER = 2
-    const val CLASS_TIER = 3
-    const val NO_TIER = -1
+    /** The resource-id tier: the one place a reused id needs the recorded caption to narrow it. */
+    private const val ID_TIER = 0
 
     /** A caption that names an action, not a thing: it is repeated once per row, so it identifies nothing. */
     private val ACTION_WORD = Regex("add(\\s+item)?|\\+|buy( now)?|order( now)?|select|choose|get|go", RegexOption.IGNORE_CASE)
@@ -57,14 +54,7 @@ object SelectorMatcher {
     }
 
     /** Every node matching the highest-priority field that matches anything (all the ADDs, not just the first). */
-    fun findAll(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false): List<UiNode> =
-        matched(nodes, sel, textContains).second
-
-    /**
-     * The hits plus WHICH field produced them: [ID_TIER]/[CLASS_TIER] say nothing about the target's identity (an id
-     * every row reuses), while the text/desc tiers mean the control was found by its own caption.
-     */
-    fun matched(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false): Pair<Int, List<UiNode>> {
+    fun findAll(nodes: List<UiNode>, sel: Selector, textContains: Boolean = false): List<UiNode> {
         val steps = listOf<(UiNode) -> Boolean>(
             { sel.resourceId.isNotEmpty() && it.resourceId == sel.resourceId },
             { sel.text.isNotEmpty() && !it.password && textMatches(it.text, sel.text, textContains) },
@@ -76,10 +66,10 @@ object SelectorMatcher {
             val hits = nodes.filter(pred)
             if (hits.isEmpty()) continue
             // Apps reuse ids ("container") across many elements: the recorded caption picks the right one.
-            if (tier == ID_TIER && hits.size > 1) narrowByCaption(nodes, hits, sel)?.let { return tier to it }
-            return tier to hits
+            if (tier == ID_TIER && hits.size > 1) narrowByCaption(nodes, hits, sel)?.let { return it }
+            return hits
         }
-        return NO_TIER to emptyList()
+        return emptyList()
     }
 
     /**
@@ -100,20 +90,19 @@ object SelectorMatcher {
     ): UiNode? {
         val pools = if (forTap) listOf(nodes.filter { it.clickable }, nodes) else listOf(nodes)
         val parent by lazy { RowContext.parents(tree) }
-        fun pick(tier: Int, hits: List<UiNode>): UiNode? =
-            hits.firstOrNull()?.takeIf { !forTap || !blind(tree, parent, tier, sel, hits) }
+        fun pick(hits: List<UiNode>): UiNode? =
+            hits.firstOrNull()?.takeIf { !forTap || !blind(tree, parent, sel, hits) }
         val byValue = { pool: List<UiNode> ->
-            if (slotValue.isNullOrEmpty()) NO_TIER to emptyList()
-            else matched(pool, Selector(text = slotValue), textContains = true)
+            if (slotValue.isNullOrEmpty()) emptyList() else findAll(pool, Selector(text = slotValue), textContains = true)
         }
         for (pool in pools) {
-            val (tier, hits) = matched(pool, sel)
+            val hits = findAll(pool, sel)
             if (hits.isNotEmpty()) {
-                pick(tier, hits)?.let { return it }
+                pick(hits)?.let { return it }
                 // The selector cannot identify one control; only the slot value may still single one out.
-                return byValue(pool).let { (t, h) -> pick(t, h) }
+                return pick(byValue(pool))
             }
-            if (forTap) byValue(pool).let { (t, h) -> pick(t, h) }?.let { return it }
+            if (forTap) pick(byValue(pool))?.let { return it }
         }
         return null
     }
@@ -125,10 +114,15 @@ object SelectorMatcher {
      * never a guess; several different controls behind a NAMING caption are the app repeating its own content in a
      * suggestion list and a carousel, where the first hit is the one the demonstration used.
      */
-    private fun blind(tree: List<UiNode>, parent: IntArray, tier: Int, sel: Selector, hits: List<UiNode>): Boolean {
+    private fun blind(tree: List<UiNode>, parent: IntArray, sel: Selector, hits: List<UiNode>): Boolean {
         if (hits.size <= 1 || oneControl(tree, parent, hits)) return false
-        val caption = if (tier == TEXT_TIER) sel.text else if (tier == DESC_TIER) sel.contentDesc else ""
-        return caption.isEmpty() || ACTION_WORD.matches(caption.trim())
+        // Whichever field matched, it is the CAPTION that says which control this is. A naming caption shared by
+        // several controls is the app repeating itself — Zomato's home carries three identical search bars, one per
+        // cached page, and its menu lists one "Domino's Pizza" per section — and the demonstration used the first.
+        // An action caption ("ADD", "+") names what the control does, not which one it is, so it cannot aim a tap;
+        // nor can an empty caption, which leaves nothing but a resource id every row reuses.
+        val caption = sel.text.ifBlank { sel.contentDesc }.trim()
+        return caption.isEmpty() || ACTION_WORD.matches(caption)
     }
 
     /** Hits that resolve to one clickable node are one control seen twice; more than one is a real ambiguity. */

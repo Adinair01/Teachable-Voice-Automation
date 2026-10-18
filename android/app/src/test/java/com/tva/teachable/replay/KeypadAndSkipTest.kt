@@ -81,5 +81,36 @@ class KeypadAndSkipTest {
         assertEquals(emptyList<String>(), d.pressed)
     }
 
+    /** The app is already open on the wrong screen: the flow must wait for the restart, not race the old tree. */
+    private class AlreadyOpen : Device {
+        var launches = 0
+        private var restarted = false
+        val pressed = mutableListOf<String>()
+        override fun tree(): LiveTree {
+            // Before the relaunch lands, the old screen is still up and the package already matches.
+            val caps = if (restarted) listOf("1", "2", "Add", "Equals") else listOf("Some other screen")
+            val nodes = ArrayList<UiNode>()
+            nodes += UiNode(0, 0, PKG, "", "", "", "", "", false, false, false, false)
+            caps.forEach { c -> nodes += UiNode(nodes.size, 1, PKG, "", c, if (c == "Add" || c == "Equals") c else "", "android.widget.Button", "", true, false, false, false) }
+            return LiveTree(nodes, emptyList())
+        }
+        override fun launch(packageName: String): Boolean { launches++; restarted = true; return true }
+        override fun tap(tree: LiveTree, node: UiNode) = true.also { pressed += node.text }
+        override fun type(tree: LiveTree, node: UiNode, value: String) = true
+        override fun scroll(tree: LiveTree) = false
+        override fun back() = true
+    }
+
+    @Test fun launchWaitsForTheAppToRestartWhenItIsAlreadyInFront() {
+        // Live on Zomato: the app was already open on a restaurant page, "is this package in front" was instantly
+        // true, and the flow looked for the home search bar on the old screen and stopped at step 3.
+        val d = AlreadyOpen()
+        val flow = Flow("add", "Add five and three", PKG, listOf(FlowStep(StepType.LAUNCH, value = PKG), num1, add))
+        val r = runBlocking { Replayer(d, cfg = fast).run(flow, mapOf("num1" to "12")) }
+        assertEquals(1, d.launches)
+        assertTrue(r.steps.toString(), r.steps[0].ok)
+        assertEquals(listOf("1", "2", "Add"), d.pressed)
+    }
+
     private companion object { const val PKG = "com.coloros.calculator" }
 }

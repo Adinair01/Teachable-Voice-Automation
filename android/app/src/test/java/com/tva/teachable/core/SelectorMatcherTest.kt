@@ -72,6 +72,21 @@ class SelectorMatcherTest {
         assertEquals(2, SelectorMatcher.target(nodes, Selector(text = "Domino's Pizza"), null, forTap = true)?.index)
     }
 
+    @Test fun aReusedIdWithANamingCaptionActsOnTheFirstOfSeveralCachedCopies() {
+        // Real Zomato home: THREE nodes with id search_edit_text, one per cached page, all carrying the same
+        // descriptive caption. They are the same logical control, and the demonstration tapped the first.
+        val nodes = listOf(
+            UiNode(0, 0, "p", "", "", "", "", "", false, false, false, false),
+            UiNode(1, 1, "p", "z:id/search_edit_text", "", "Double tap to open search panel", "", "", true, false, false, false),
+            UiNode(2, 1, "p", "z:id/search_edit_text", "", "Double tap to open search panel", "", "", true, false, false, false),
+            UiNode(3, 1, "p", "z:id/search_edit_text", "", "Double tap to open search panel", "", "", true, false, false, false),
+        )
+        val sel = Selector(resourceId = "z:id/search_edit_text", contentDesc = "Double tap to open search panel")
+        assertEquals(1, SelectorMatcher.target(nodes, sel, null, forTap = true)?.index)
+        // With no caption at all there is nothing to identify them by, so it must refuse.
+        assertNull(SelectorMatcher.target(nodes, Selector(resourceId = "z:id/search_edit_text"), null, forTap = true))
+    }
+
     @Test fun anActionCaptionRepeatedPerRowIsRefused() {
         // The same shape, but the caption names an ACTION: one ADD per dish identifies nothing, so acting on the
         // first would add whichever dish happens to come first in the tree.
@@ -83,6 +98,15 @@ class SelectorMatcherTest {
         assertNull(SelectorMatcher.target(nodes, Selector(resourceId = "z:id/add_button", contentDesc = "ADD"), null, forTap = true))
         // The row anchor is how that tap is meant to be aimed, and it still works.
         assertEquals(6, SelectorMatcher.target(nodes, Selector(contentDesc = "ADD", near = "Farmhouse Pizza"), null, forTap = true)?.index)
+    }
+
+    @Test fun aPriceInACaptionDoesNotTieTheStepToTheDemonstration() {
+        // Taught against "Add item \u20b9114"; the same control reads a different amount for another size, another
+        // city, or after a price change. The words are what name the button.
+        assertEquals(0, SelectorMatcher.find(listOf(node(0, text = "Add item \u20b9149")), Selector(text = "Add item \u20b9114"))?.index)
+        assertEquals(0, SelectorMatcher.find(listOf(node(0, text = "Add item")), Selector(text = "Add item \u20b9114"))?.index)
+        // Digits that are part of a name are not a price and must survive.
+        assertNull(SelectorMatcher.find(listOf(node(0, text = "Big Big 6in1 Pizza")), Selector(text = "Big Big 4in1 Pizza")))
     }
 
     @Test fun spokenSlotMatchesDespitePunctuation() {
