@@ -111,9 +111,19 @@ class Replayer(
 
         var fallback = false
         var found = poll(cfg.waitMs, probe)
+        // A value the command parameterised may need entering one character at a time: the demonstration tapped the
+        // single key "5", but "12" is two keys and no button carries that label.
+        if (found == null && isTap && step.slotRef != null) {
+            keyedIn(i, step, sel, slotValue)?.let { return it }
+        }
         // A sheet or upsell seen during the demo ("Unlock 20% OFF… Continue") need not appear again: if the next step
         // can already run, this one was an interstitial that was not shown this time.
-        if (found == null && next != null && isDistinctive(next) && probeFor(next.type, resolved(next.selector, slots), next.slotRef?.let { slots[it] })(device.tree()) != null) {
+        //
+        // NEVER for a step the command parameterised. An interstitial is app chrome and is never slot-bound, whereas
+        // a missing slot target means the flow cannot do what was asked: skipping it once reported "Done." for
+        // "what is 12 plus 7" after tapping only "+ 7 =", because the step after it happened to be on screen.
+        if (found == null && step.slotRef == null && next != null && isDistinctive(next) &&
+            probeFor(next.type, resolved(next.selector, slots), next.slotRef?.let { slots[it] })(device.tree()) != null) {
             return StepResult(i, true, error = "skipped: not shown this time")
         }
         if (found == null && sel.near.isNotEmpty()) {
@@ -177,6 +187,31 @@ class Replayer(
         return false
     }
 
+
+    /**
+     * Types a multi-character slot value on a keypad, one key per character, when no single control carries the whole
+     * value. Only for all-digit values whose every digit is on screen as its own tappable key, so it cannot wander off
+     * and press something unrelated; a screen the guard holds back is handed over as usual.
+     */
+    private suspend fun keyedIn(i: Int, step: FlowStep, sel: Selector, value: String?): StepResult? {
+        val v = value?.trim().orEmpty()
+        if (v.length < 2 || !v.all { it.isDigit() }) return null
+        val keyFor = { c: Char, t: LiveTree ->
+            SelectorMatcher.target(t.nodes, sel.copy(text = c.toString(), near = ""), null, forTap = true)
+        }
+        // Every key must be there BEFORE anything is pressed: half a number entered is worse than none.
+        val tree = device.tree()
+        if (v.any { keyFor(it, tree) == null }) return null
+        for (c in v) {
+            val t = device.tree()
+            val key = keyFor(c, t) ?: return StepResult(i, false, error = stuck("the key \"$c\""))
+            ScreenGuard.action(t.nodes, key)?.let { return handover(i, it) }
+            if (!device.tap(t, key)) return StepResult(i, false, error = "couldn't press \"$c\"")
+            poll(cfg.settleMs) { tt -> tt.takeIf { signature(it) != signature(t) } }
+        }
+        android.util.Log.i("TVA", "replay: entered \"$v\" one key at a time")
+        return StepResult(i, true)
+    }
 
     /** Only a tap with its own caption or row anchor proves the screen moved on; a bare text-field id exists everywhere. */
     private fun isDistinctive(step: FlowStep) = step.type == StepType.TAP &&

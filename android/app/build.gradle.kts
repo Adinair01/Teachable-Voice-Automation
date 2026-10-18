@@ -14,6 +14,9 @@ android {
         versionName = "0.1"
     }
     buildFeatures { buildConfig = true }
+    // android.util.Log is a stub on the JVM and throws "not mocked" when production code logs; unit tests exercise
+    // real replay paths that log, so let those calls return defaults instead of failing the test.
+    testOptions { unitTests.isReturnDefaultValues = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

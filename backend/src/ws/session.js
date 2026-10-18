@@ -6,6 +6,7 @@ import { RunLog } from '../models/RunLog.js';
 import { extractIntent } from '../prompts/intent.js';
 import { normaliseSlots, withDefaults } from '../prompts/slots.js';
 import { matchFlow } from '../prompts/matchFlow.js';
+import { pastPhrasings } from '../services/phrasings.js';
 import { generalise, IMPLIED_SLOTS } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
 import { parseOpenApp, resolveApp } from '../services/openApp.js';
@@ -108,7 +109,11 @@ export class Session {
       return this.say(`Opening ${app.label}.`);
     }
     const flows = await Flow.find().sort({ createdAt: -1 }).limit(100).lean();
-    const m = flows.length ? await matchFlow(text, flows) : { ...(await extractIntent(text)), flowId: null };
+    // Commands that already worked are handed to the matcher alongside each flow's taught wording, so the way this
+    // user actually speaks keeps being recognised instead of only the sentence used while teaching.
+    const said = flows.length ? await pastPhrasings(flows) : {};
+    const withSaid = flows.map((f) => ({ ...f, alsoSaidAs: said[String(f._id)] ?? [] }));
+    const m = flows.length ? await matchFlow(text, withSaid) : { ...(await extractIntent(text)), flowId: null };
     if (m.flowId) {
       const flow = flows.find((f) => String(f._id) === m.flowId);
       const slots = normaliseSlots(m.slots);

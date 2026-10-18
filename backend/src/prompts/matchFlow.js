@@ -17,6 +17,8 @@ with), and slots with example values. A flow is a TEMPLATE: commands that differ
 A slot value may be ANY value of that kind, including one never seen before: another Settings page (Bluetooth ->
 Wi-Fi, Display, Sound), another tab of the same app, other numbers, another search term. Only a genuinely different
 action or a different app is a non-match.
+A flow may also carry alsoSaidAs: commands that have ALREADY run this flow successfully. They are further ways this
+same user says this task, so a command resembling any of them is a match just as much as one resembling the description.
 Decide using the flow's own slots: if the part of the command that differs from the flow's description could fill one of
 that flow's slots ("stopwatch" -> "timer" or "world clock" for slot feature, in the same app), it IS a match, and
 the command need not repeat the app name. Match on the flow's app and kind of action, not on shared words: "open the timer"
@@ -33,7 +35,12 @@ Reply JSON: {"flowId": "<id or null>", "slots": {...}, "intentKey": "...", "clar
 /** One call does paraphrase matching + slot extraction. flowId is validated against the ids we sent. */
 export async function matchFlow(utterance, flows, deps = {}) {
   const ids = new Set(flows.map((f) => String(f._id)));
-  const listing = flows.map((f) => ({ id: String(f._id), description: f.description, slots: f.slots }));
+  const listing = flows.map((f) => ({
+    id: String(f._id),
+    description: f.description,
+    slots: f.slots,
+    ...(f.alsoSaidAs?.length ? { alsoSaidAs: f.alsoSaidAs } : {}),
+  }));
   const out = await groqJson({
     system: SYSTEM,
     user: JSON.stringify({ command: utterance, flows: listing }),
