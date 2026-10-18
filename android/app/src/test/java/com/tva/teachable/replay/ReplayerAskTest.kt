@@ -488,5 +488,32 @@ class ReplayerAskTest {
         assertFalse("never the old generic message", r.steps.last().error.orEmpty().contains("action failed"))
     }
 
+    // ---------- steps that are gestures, not actions ----------
+
+    @Test fun aTaughtScrollWithNothingToScrollDoesNotEndTheRun() {
+        // Seen live: Zomato's home feed had not loaded, scroll returned false, and the run ended with "action failed".
+        val phone = Phone("home", mapOf("home" to listOf(N(text = "Search"))))
+        val r = run(phone, Scripted(), flow(FlowStep(StepType.SCROLL), FlowStep(StepType.TAP, Selector(text = "Search"))))
+        assertTrue(r.steps.toString(), r.success)
+        assertEquals(listOf("Search"), phone.tapped)
+    }
+
+    @Test fun anAppThatNeverComesToTheFrontIsAQuestionNotABareFailure() {
+        // Seen live: the phone had locked itself, the launch could not land, and the run said only "action failed".
+        val locked = object : Device {
+            override fun tree() = LiveTree(listOf(UiNode(0, 0, "com.android.systemui", "", "", "", "", "", false, false, false, false)), emptyList())
+            override fun launch(packageName: String) = true
+            override fun tap(tree: LiveTree, node: UiNode) = true
+            override fun type(tree: LiveTree, node: UiNode, value: String) = true
+            override fun scroll(tree: LiveTree) = false
+            override fun back() = true
+        }
+        val asker = Scripted("stop")
+        val r = runBlocking { Replayer(locked, null, cfg = fast, asker = asker).run(flow(FlowStep(StepType.LAUNCH, value = PKG)), emptyMap()) }
+        assertFalse(r.success)
+        assertEquals(StuckCause.WRONG_APP, asker.asked.single().cause)
+        assertTrue(asker.asked.single().spoken, asker.asked.single().spoken.contains("never came to the front"))
+    }
+
     private companion object { const val PKG = "com.application.zomato" }
 }

@@ -46,9 +46,11 @@ class ReplayerStuckTest {
     }
 
     @Test fun llmGuessesAreCappedPerRun() = runBlocking {
-        val d = FakeDevice(listOf("Continue please"))
+        // The guesses share a NAMING word with each step ("Continue" alone no longer counts: it names no control), so the
+        // first two are used and the cap is what stops the third.
+        val d = FakeDevice(listOf("Margherita please"))
         val picker = ElementPicker { _, _, _ -> 0 }
-        val r = Replayer(d, picker, cfg = fast).run(flow(tap("Continue A"), tap("Continue B"), tap("Continue C"), tap("Continue D")), emptyMap())
+        val r = Replayer(d, picker, cfg = fast).run(flow(tap("Margherita A"), tap("Margherita B"), tap("Margherita C"), tap("Margherita D")), emptyMap())
         assertEquals(2, d.tapped.size) // third step finds nothing and no third guess is made
         assertEquals(listOf(true, true, false), r.steps.map { it.ok })
     }
@@ -173,5 +175,41 @@ class HonestRunTest {
         val r = Replayer(d, cfg = fast).run(flow(qty), mapOf("quantity" to ""))
         assertFalse(r.success)
         assertTrue(r.steps.last().error!!, r.steps.last().error!!.startsWith("I did every step, but I'm not on the cart"))
+    }
+
+    @Test fun anLlmGuessThatOnlySharesAnActionWordIsRefused() = runBlocking {
+        // Seen live: for "Add item ₹279" (a sheet that never opened) a guess was accepted because it shared "add" — the
+        // same caption every dish's ADD carries. Now refused: nothing tapped, the run asks.
+        val step = FlowStep(StepType.TAP, Selector(text = "Add item ₹279"))
+        val menu = Screen(listOf("ADD", "Margherita Pizza"))
+        val r = Replayer(menu, ElementPicker { _, _, _ -> 1 }, cfg = fast).run(flow(step), emptyMap())
+        assertFalse(r.success)
+        assertTrue("another dish's ADD must not be tapped: ${menu.tapped}", menu.tapped.isEmpty())
+    }
+
+    @Test fun anLlmGuessThatSharesANamingWordIsStillUsed() = runBlocking {
+        // A genuinely renamed control ("Margherita Pizza" now reads "Margherita Pizza Regular") is what the fallback is for.
+        val step = FlowStep(StepType.TAP, Selector(text = "Margherita Pizza"))
+        val menu = Screen(listOf("Margherita Pizza Regular", "Farmhouse Pizza"))
+        val r = Replayer(menu, ElementPicker { _, _, _ -> 0 }, cfg = fast).run(flow(step), emptyMap())
+        assertTrue(r.steps.toString(), r.success)
+        assertEquals(listOf("Margherita Pizza Regular"), menu.tapped)
+    }
+
+    @Test fun aSharedCategoryWordIsNotEnoughForAGuess() = runBlocking {
+        // Found by the test above while it was being written: a guess of "Farmhouse Pizza" for "Margherita Pizza" was
+        // accepted because both say "pizza". It is a different dish.
+        val step = FlowStep(StepType.TAP, Selector(text = "Margherita Pizza"))
+        val menu = Screen(listOf("Margherita Pizza Regular", "Farmhouse Pizza"))
+        val r = Replayer(menu, ElementPicker { _, _, _ -> 1 }, cfg = fast).run(flow(step), emptyMap())
+        assertFalse(r.success)
+        assertTrue("the other dish must not be tapped: ${menu.tapped}", menu.tapped.isEmpty())
+    }
+
+    @Test fun aPriceIsNotANamingWord() = runBlocking {
+        val step = FlowStep(StepType.TAP, Selector(text = "Add item ₹279"))
+        val menu = Screen(listOf("Pepper Barbecue ₹279", "Garlic Bread"))
+        Replayer(menu, ElementPicker { _, _, _ -> 0 }, cfg = fast).run(flow(step), emptyMap())
+        assertTrue(menu.tapped.isEmpty())
     }
 }

@@ -129,7 +129,7 @@ class Replayer(
             StepType.LAUNCH -> launched(i, step, value, slots)
             StepType.WAIT -> { delay(value.toLongOrNull() ?: 500); StepResult(i, true) }
             StepType.BACK -> finish(i, step, device.back(), slots = slots)
-            StepType.SCROLL -> finish(i, step, device.scroll(device.tree()), slots = slots)
+            StepType.SCROLL -> scrolled(i)
             StepType.TAP, StepType.TYPE -> targeted(i, step, next, slots, value)
             // Optional by design: "order a pizza" keeps the app's own quantity and address.
             StepType.SET_QUANTITY -> if (slotValue.isEmpty()) StepResult(i, true) else quantity(i, step, slots, slotValue).askable()
@@ -157,8 +157,29 @@ class Replayer(
             t.nodes.firstOrNull()?.packageName == pkg && (!wasInFront || signature(t) != beforeSig)
         }
         // Even a cold start paints in stages; the first step must not read a half-built screen.
-        if (arrived) awaitStable()
-        return finish(i, step, arrived, slots = slots)
+        if (!arrived) {
+            // Seen live: the phone had locked itself, so the app could not come to the front. Say so and ask.
+            return StepResult(
+                i, false,
+                error = "I opened the app, but it never came to the front. The phone may be locked or showing something on top.",
+                cause = StuckCause.WRONG_APP,
+            )
+        }
+        awaitStable()
+        return finish(i, step, true, slots = slots)
+    }
+
+    /**
+     * A taught scroll is a "show me more" gesture with no consequence of its own. If the page has nothing to scroll yet
+     * (a feed still loading — seen live on Zomato's home, where it ended the run with a bare "action failed"), wait for
+     * the screen to settle and try once more; failing that, carry on: the next step scrolls for its own target if needed,
+     * and asks specifically if it still cannot find it.
+     */
+    private suspend fun scrolled(i: Int): StepResult {
+        if (device.scroll(device.tree())) return StepResult(i, true)
+        val settled = awaitStable()
+        if (device.scroll(settled)) return StepResult(i, true)
+        return StepResult(i, true, error = "skipped: nothing to scroll here")
     }
 
     private suspend fun targeted(i: Int, step: FlowStep, next: FlowStep?, slots: Map<String, String>, value: String): StepResult {
@@ -225,9 +246,13 @@ class Replayer(
             val tree = device.tree()
             val idx = picker.pick(step, slots, tree.nodes)
             // A guess must never be the one that throws the user's cart or data away ("Replace", "Clear").
-            tree.nodes.getOrNull(idx ?: -1)?.takeUnless { CartState.DESTRUCTIVE.containsMatchIn(it.text + " " + it.contentDesc) }
+            val guess = tree.nodes.getOrNull(idx ?: -1)
+            val accepted = guess?.takeUnless { CartState.DESTRUCTIVE.containsMatchIn(it.text + " " + it.contentDesc) }
                 ?.takeIf { plausible(step, sel, it) }
-                ?.let { found = tree to it; fallback = true; llmPicks++ }
+            // A guessed tap always leaves a trace: what was asked for, what the model offered, and whether it was used.
+            android.util.Log.i("TVA", "replay: llm pick for ${targetLabel(step, sel)} -> " +
+                (guess?.let { "\"${it.text.ifBlank { it.contentDesc }.take(40)}\" (${if (accepted != null) "used" else "refused"})" } ?: "nothing"))
+            accepted?.let { found = tree to it; fallback = true; llmPicks++ }
         }
         var (tree, node) = found ?: return stuckResult(i, step, sel, targetLabel(step, sel))
         if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
@@ -651,8 +676,16 @@ class Replayer(
     private fun plausible(step: FlowStep, sel: Selector, node: UiNode): Boolean {
         val caption = listOf(node.text, node.contentDesc).map { it.trim() }
         if (caption.any { DISMISS.matches(it) }) return true
-        val want = words("${sel.text} ${sel.contentDesc} ${step.value}")
-        return words(caption.joinToString(" ")).any { it in want }
+        // Only words that NAME something count. "Add", "item", "order" and a bare price are on every row's button, so
+        // sharing one proves nothing: seen live, a guess for "Add item ₹279" was accepted on the strength of "add", which
+        // in opening hours could have been ANOTHER dish's ADD. A step with no naming word left cannot be guessed at.
+        // And the guess must carry the step's MOST distinctive word, not merely any word: "pizza" is shared by every pizza,
+        // so a guess of "Farmhouse Pizza" for "Margherita Pizza" is a different dish, while "Margherita Pizza Regular" is
+        // the same one renamed. Same rule as the row matcher's longest-word fallback.
+        val key = words("${sel.text} ${sel.contentDesc} ${step.value}")
+            .filterNot { it in GENERIC || it.all(Char::isDigit) }
+            .maxByOrNull { it.length } ?: return false
+        return key in words(caption.joinToString(" "))
     }
 
     private fun words(s: String) = s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 3 }.toSet()
@@ -694,7 +727,7 @@ class Replayer(
      * what we actually asked for", which catches a tap that opened the wrong restaurant or dish.
      */
     private suspend fun finish(i: Int, step: FlowStep, acted: Boolean, fallback: Boolean = false, slots: Map<String, String> = emptyMap()): StepResult {
-        if (!acted) return StepResult(i, false, fallback, "action failed")
+        if (!acted) return StepResult(i, false, fallback, if (step.type == StepType.BACK) "the back button didn't respond" else "that didn't work")
         val e = step.expect
         val want = resolveSlots(e.textContains, slots)
         if (e.packageName.isEmpty() && want.isEmpty()) return StepResult(i, true, fallback)
@@ -730,6 +763,9 @@ class Replayer(
         const val MAX_QTY = 20
         const val MAX_LLM_PICKS = 2
         const val MAX_QUESTIONS = 4
+        /** Words on a control that say what it DOES, not which one it is: never enough to trust an LLM's guess. */
+        val GENERIC = setOf("add", "added", "item", "items", "order", "buy", "now", "select", "choose", "get", "tap",
+            "button", "more", "view", "continue", "proceed", "next", "done", "the", "and", "for", "with")
         const val MAX_DISMISSALS = 2
         const val SCROLL_SETTLE_MS = 1200L
         // What a blind pre-step may tap: controls that only CLOSE something. No Continue/Proceed (they advance the
