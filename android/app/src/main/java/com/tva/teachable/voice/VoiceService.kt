@@ -22,6 +22,8 @@ import com.tva.teachable.net.BackendConfig
 import com.tva.teachable.replay.BackendElementPicker
 import com.tva.teachable.replay.ConfirmationGate
 import com.tva.teachable.replay.Replayer
+import com.tva.teachable.replay.Stuck
+import com.tva.teachable.replay.StuckAsker
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +46,9 @@ class VoiceService : Service() {
     private var expectAudio = false
     private var confirm: CompletableDeferred<Boolean>? = null
     @Volatile private var awaitingConfirmSpeech = false
+    /** The reply to a question the replay asked because a step could not proceed (see [askUser]). */
+    private var answer: CompletableDeferred<String>? = null
+    @Volatile private var awaitingAnswer = false
     private var handsFreeCap: Job? = null
 
     override fun onCreate() {
@@ -92,7 +97,7 @@ class VoiceService : Service() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             AppState.log("microphone permission missing — open the app and allow it"); return
         }
-        client.send(JSONObject().put("type", "audio_start").put("mode", if (awaitingConfirmSpeech) "confirm" else "command"))
+        client.send(JSONObject().put("type", "audio_start").put("mode", if (awaitingConfirmSpeech || awaitingAnswer) "confirm" else "command"))
         if (!recorder.start()) { client.send(JSONObject().put("type", "audio_end")); return } // don't leave the STT stream open
         AppState.listen.value = mode
         AppState.status.value = if (mode == ListenMode.HANDS_FREE) "Listening hands-free — tap to send" else "Listening…"
@@ -111,7 +116,14 @@ class VoiceService : Service() {
         client.send(JSONObject().put("type", "audio_end"))
     }
 
-    fun sendCommand(text: String) { AppState.log("you (typed): $text"); client.send(JSONObject().put("type", "command").put("text", text)) }
+    fun sendCommand(text: String) {
+        AppState.log("you (typed): $text")
+        // While a question is waiting, typed text is the ANSWER — otherwise "tap Continue" would reach the matcher as a
+        // brand-new command and open teach mode. Deliberately not done for the sensitive-step confirmation: that stays
+        // a spoken or button-pressed yes, whatever else is typed.
+        if (awaitingAnswer && text.isNotBlank()) { answer?.complete(text); return }
+        client.send(JSONObject().put("type", "command").put("text", text))
+    }
 
     /** Overlay "Done" button (or the spoken word). */
     fun finishTeaching() = scope.launch { finishTeachingNow() }
@@ -141,6 +153,7 @@ class VoiceService : Service() {
     private fun onTranscript(text: String) {
         AppState.log("you: $text")
         confirm?.let { if (awaitingConfirmSpeech && text.isNotBlank()) it.complete(ConfirmText.isYes(text)) }
+        answer?.let { if (awaitingAnswer && text.isNotBlank()) it.complete(text) }
         if (!AppState.teaching.value) AppState.status.value = "Idle"
     }
 
@@ -171,7 +184,7 @@ class VoiceService : Service() {
         AppState.status.value = "Running: ${flow.description}"
         if (BuildConfig.DEBUG) Log.d("TVA", "replay slots=$slots")
         val gate = ConfirmationGate { step, _ -> askConfirmation("${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc }}".trim()) }
-        val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate).run(flow, slots)
+        val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate, asker = StuckAsker(::askUser)).run(flow, slots)
         val outcome = when {
             r.handover != null -> "Your turn"
             r.success -> "Done"
@@ -183,7 +196,34 @@ class VoiceService : Service() {
         client.send(JSONObject().put("type", "run_result").put("flowId", m.optString("flowId")).put("success", r.success).put("declined", r.declined)
             .put("handover", r.handover?.let { JSONObject().put("kind", it.kind.name.lowercase()).put("reason", it.reason) } ?: JSONObject.NULL)
             .put("utterance", m.optString("utterance")).put("steps", JSONArray().also { a ->
-                r.steps.forEach { a.put(JSONObject().put("i", it.index).put("ok", it.ok).put("llm", it.usedLlmFallback).put("err", it.error ?: JSONObject.NULL)) } }))
+                r.steps.forEach { a.put(JSONObject().put("i", it.index).put("ok", it.ok).put("llm", it.usedLlmFallback).put("err", it.error ?: JSONObject.NULL)) } })
+            .put("corrections", JSONArray().also { a -> r.corrections.forEach { a.put(correctionJson(it)) } }))
+    }
+
+    private fun correctionJson(c: com.tva.teachable.core.Correction) = JSONObject()
+        .put("step", c.stepIndex).put("kind", c.kind.name.lowercase()).put("op", c.op.name.lowercase())
+        .put("was", c.was).put("now", c.now)
+        .apply {
+            c.selector?.let { s ->
+                put("selector", JSONObject().put("resourceId", s.resourceId).put("text", s.text)
+                    .put("contentDesc", s.contentDesc).put("className", s.className))
+            }
+        }
+
+    /**
+     * Says the question aloud and waits for the answer — spoken (push-to-talk) or typed. The mic is told it is an answer,
+     * so it is read as a reply and never matched as a fresh command. No answer in [ANSWER_MS] ends the wait: the run
+     * stops with its specific message rather than hanging.
+     */
+    private suspend fun askUser(q: Stuck): String? {
+        val d = CompletableDeferred<String>(); answer = d; awaitingAnswer = true
+        AppState.status.value = "Waiting for your answer"
+        client.send(JSONObject().put("type", "say_request").put("text", q.spoken.take(SPOKEN_MAX)))
+        val reply = withTimeoutOrNull(ANSWER_MS) { d.await() }
+        answer = null; awaitingAnswer = false
+        AppState.log("answer to \"${q.spoken.take(60)}…\": ${reply ?: "(none)"}")
+        if (reply != null) AppState.status.value = "Running"
+        return reply
     }
 
     /** Pauses replay until the user says or taps "yes". Nothing sensitive proceeds without it; 30 s of silence = no. */
@@ -200,6 +240,8 @@ class VoiceService : Service() {
     companion object {
         private const val CHANNEL = "voice"
         private const val HANDS_FREE_MAX_MS = 60_000L
+        private const val ANSWER_MS = 90_000L
+        private const val SPOKEN_MAX = 500
         @Volatile var instance: VoiceService? = null
     }
 }

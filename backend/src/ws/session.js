@@ -1,17 +1,19 @@
 import { z } from 'zod';
 import { logger } from '../lib/logger.js';
 import { SttStream, synthesize } from '../lib/deepgram.js';
+import { createHash } from 'node:crypto';
 import { Flow } from '../models/Flow.js';
 import { RunLog } from '../models/RunLog.js';
 import { extractIntent } from '../prompts/intent.js';
 import { normaliseSlots, withDefaults } from '../prompts/slots.js';
 import { matchFlow } from '../prompts/matchFlow.js';
 import { pastPhrasings } from '../services/phrasings.js';
+import { correctionInput, plan, apply, describe, isYes, isNo } from '../services/correction.js';
 import { generalise, IMPLIED_SLOTS } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
 import { parseOpenApp, resolveApp } from '../services/openApp.js';
 import { HANDOVER_KINDS, handoverLine } from '../services/handover.js';
-import { isStatusQuery, statusLine } from '../services/runStatus.js';
+import { isStatusQuery, statusLine, sentence } from '../services/runStatus.js';
 
 /** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
 const TEACH_PROMPT = "I haven't learned that yet. Show me once: do it on the screen, then say done.";
@@ -34,11 +36,14 @@ const runResult = z.object({
   handover: z.object({ kind: z.enum(HANDOVER_KINDS), reason: z.string().max(200) }).nullable().default(null),
   utterance: z.string().max(500).default(''),
   steps: z.array(z.object({ i: z.number(), ok: z.boolean(), llm: z.boolean().default(false), err: z.string().nullable().default(null) })).max(200).default([]),
+  // What the user's answers to "what should I do?" imply for the flow. Offered, never applied, until they say yes.
+  corrections: z.array(correctionInput).max(20).default([]),
 });
+const fingerprint = (steps) => createHash('sha1').update(JSON.stringify(steps)).digest('hex');
 
 /** One phone connection: audio -> STT -> intent/match -> replay | teach; teach_done -> generalise -> save. */
 export class Session {
-  constructor(socket) { this.socket = socket; this.stt = null; this.sttMode = 'command'; this.teaching = null; this.apps = []; this.pending = null; }
+  constructor(socket) { this.socket = socket; this.stt = null; this.sttMode = 'command'; this.teaching = null; this.apps = []; this.pending = null; this.pendingCorrection = null; }
 
   send(obj) { if (this.socket.readyState === 1) this.socket.send(JSON.stringify(obj)); }
 
@@ -69,7 +74,7 @@ export class Session {
         this.stt = new SttStream();
         this.sttMode = msg.mode === 'confirm' ? 'confirm' : 'command'; // confirm: transcript only, never a command
         return;
-      case 'say_request': return this.say(z.string().min(1).max(300).parse(msg.text));
+      case 'say_request': return this.say(z.string().min(1).max(600).parse(msg.text));
       case 'audio_end': return this.#endAudio();
       case 'apps': this.apps = appList.parse(msg).apps; return;
       case 'command': return this.handleCommand(z.string().min(1).max(500).parse(msg.text));
@@ -96,6 +101,13 @@ export class Session {
       // out was "done" (which then failed on an empty demo). A judge who declines to teach must be able to back out.
       if (CANCEL.test(text)) { const cmd = this.teaching.command; this.teaching = null; this.send({ type: 'teach_cancel' }); await this.#logLearn(false, cmd); return this.say("Okay, I've stopped. Nothing was saved."); }
       return DONE.test(text) ? this.send({ type: 'teach_finish' }) : this.say("I'm still watching. Say done when you have finished, or cancel to stop.");
+    }
+    // A yes/no to "should I update the flow?" is the ONLY way a taught flow changes after a run. Anything else
+    // drops the offer, so an unrelated command can never be mistaken for consent.
+    if (this.pendingCorrection) {
+      const offered = this.pendingCorrection; this.pendingCorrection = null;
+      if (isYes(text)) return this.#applyCorrections(offered);
+      if (isNo(text)) return this.say("Okay, I've left the flow exactly as it was.");
     }
     if (isStatusQuery(text)) return this.#reportLastRun();
     if (this.pending) {
@@ -180,12 +192,41 @@ export class Session {
     // stopped it at a sensitive step, which says nothing about the match being wrong.
     // A handover also means the right flow ran: it got as far as the user's own credentials or payment.
     if (r.utterance && !r.declined) await RunLog.create({ ...base, kind: 'match', success: r.success || !!r.handover });
-    if (r.handover) return this.say(handoverLine(r.handover.kind));
-    if (r.declined) return this.say('Okay, I stopped before that step.');
-    if (r.success) return this.say('Done.');
-    // Never a generic "something went wrong": say where it stopped and why (the phone reports a specific reason).
-    const stop = r.steps.find((s) => !s.ok);
-    await this.say(stop ? `I stopped at step ${stop.i + 1}: ${stop.err ?? 'it did not work'}.` : 'I could not finish that.');
+    // What happened, then (if the user's answers showed the flow is out of date) the offer to fix it — ONE spoken
+    // message, because two back-to-back ones can cut each other off on the phone.
+    let line;
+    if (r.handover) line = handoverLine(r.handover.kind);
+    else if (r.declined) line = 'Okay, I stopped before that step.';
+    else if (r.success) line = 'Done.';
+    else {
+      // Never a generic "something went wrong": say where it stopped and why (the phone reports a specific reason).
+      const stop = r.steps.find((s) => !s.ok);
+      line = stop ? `I stopped at step ${stop.i + 1}: ${sentence(stop.err ?? 'it did not work')}` : 'I could not finish that.';
+    }
+    const offer = await this.#offerCorrections(r);
+    await this.say(offer ? `${line} ${offer}` : line);
+  }
+
+  /** Works out what to propose from the run's corrections and remembers it for the user's yes or no. */
+  async #offerCorrections(r) {
+    if (!r.corrections.length) return '';
+    const flow = await Flow.findById(r.flowId).lean().catch(() => null);
+    if (!flow) return '';
+    const planned = plan(flow.steps, r.corrections);
+    const text = describe(planned);
+    if (planned.offer.length) this.pendingCorrection = { flowId: String(flow._id), offer: planned.offer, seen: fingerprint(flow.steps) };
+    return text;
+  }
+
+  async #applyCorrections({ flowId, offer, seen }) {
+    const flow = await Flow.findById(flowId).lean().catch(() => null);
+    if (!flow) return this.say("I can't find that flow any more, so nothing was changed.");
+    // The flow may have been re-taught between the run and the yes: never apply a change meant for a different version.
+    if (fingerprint(flow.steps) !== seen) return this.say('That flow has changed since, so I did not touch it.');
+    const steps = apply(flow.steps, offer);
+    await Flow.updateOne({ _id: flow._id }, { $set: { steps } }, { runValidators: true });
+    logger.info({ flowId, ops: offer.map((o) => `${o.op}@${o.step}`) }, 'flow updated from the user\'s corrections');
+    return this.say(`Done. I've updated the flow, ${offer.length === 1 ? 'one step' : `${offer.length} steps`} changed.`);
   }
 
   close() { this.stt?.finish().catch(() => {}); }

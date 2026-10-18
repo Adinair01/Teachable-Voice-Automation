@@ -26,6 +26,11 @@ data class FlowStep(
     val candidates: Int = 0,
     /** Recording only: captions of the screen this tap led to, so the backend can set expect.textContains. */
     val screen: List<String> = emptyList(),
+    /**
+     * A tap the user said can be left out ("skip it") when its control is not on screen. Honoured ONLY for a plain tap
+     * with no slot: a missing slot target means the flow cannot do what was asked and is never skipped quietly.
+     */
+    val optional: Boolean = false,
 )
 
 data class Flow(val intentKey: String, val description: String, val appPackage: String, val steps: List<FlowStep>)
@@ -62,6 +67,7 @@ object FlowJson {
             value = o.optString("value"),
             sensitive = o.optBoolean("sensitive", false),
             expect = Expect(e?.optString("package").orEmpty(), e?.optString("textContains").orEmpty()),
+            optional = o.optBoolean("optional", false),
         )
     }
 
@@ -77,6 +83,7 @@ object FlowJson {
             if (step.context.isNotEmpty()) put("context", JSONArray(step.context))
             if (step.candidates > 0) put("candidates", step.candidates)
             if (step.screen.isNotEmpty()) put("screen", JSONArray(step.screen))
+            if (step.optional) put("optional", true)
         }
 
     fun toJson(steps: List<FlowStep>): JSONArray = JSONArray().also { a -> steps.forEach { a.put(stepToJson(it)) } }

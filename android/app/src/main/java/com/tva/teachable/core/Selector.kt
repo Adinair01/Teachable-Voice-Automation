@@ -154,7 +154,8 @@ object SelectorMatcher {
         return RowContext.pick(nodes, same.toList(), sel.near, slotValue) { it in same }
     }
 
-    private fun tappable(nodes: List<UiNode>): List<UiNode> {
+    /** Nodes a tap can reach: clickable themselves or inside a clickable ancestor, never a text input. */
+    fun tappable(nodes: List<UiNode>): List<UiNode> {
         val parent = RowContext.parents(nodes)
         val reachable = BooleanArray(nodes.size)
         for (n in nodes) reachable[n.index] = n.clickable || (parent[n.index] >= 0 && reachable[parent[n.index]])

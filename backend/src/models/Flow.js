@@ -15,6 +15,8 @@ const step = new mongoose.Schema(
     value: String,
     sensitive: { type: Boolean, default: false },
     expect: { package: String, textContains: String },
+    // A plain tap the user said can be left out when its control is not on screen (set only after their yes).
+    optional: { type: Boolean, default: false },
   },
   { _id: false },
 );

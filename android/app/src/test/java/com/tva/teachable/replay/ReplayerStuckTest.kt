@@ -149,9 +149,22 @@ class HonestRunTest {
         val unrelated = Screen(listOf("Anindita (Ah1) & 1 more", "Spicy Chicken Poppers"))
         val r = Replayer(unrelated, ElementPicker { _, _, _ -> 0 }, cfg = fast).run(flow(step), emptyMap())
         assertFalse(r.success); assertTrue(unrelated.tapped.isEmpty())
+        // A popup close no longer needs the LLM at all: with NO picker the pre-step still closes it (priority 1, item 5).
         val popup = Screen(listOf("Got it", "Spicy Chicken Poppers"))
-        Replayer(popup, ElementPicker { _, _, _ -> 0 }, cfg = fast).run(flow(step), emptyMap())
+        Replayer(popup, null, cfg = fast).run(flow(step), emptyMap())
         assertEquals(listOf("Got it"), popup.tapped)
+    }
+
+    @Test fun aPopupThatOnlyAdvancesTheFlowIsNeverTappedBlindly() = runBlocking {
+        // "Continue" moves on (on Zomato's menu it opens the cart); "OK" confirms as often as it informs. Neither is a
+        // dismissal, so neither is tapped as a pre-step: the run asks instead.
+        val step = FlowStep(StepType.TAP, Selector(text = "Add item ₹114"))
+        for (advance in listOf("Continue", "Proceed", "OK")) {
+            val d = Screen(listOf(advance, "Spicy Chicken Poppers"))
+            val r = Replayer(d, null, cfg = fast).run(flow(step), emptyMap())
+            assertFalse(advance, r.success)
+            assertTrue("$advance must not be tapped: ${d.tapped}", d.tapped.isEmpty())
+        }
     }
 
     @Test fun anOrderingFlowNotEndingOnTheCartIsNotAnOrderReadyForReview() = runBlocking {

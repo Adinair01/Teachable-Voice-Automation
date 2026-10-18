@@ -23,3 +23,6 @@ export function statusLine(run, flow) {
   const bad = run.stepResults?.find((s) => !s.ok);
   return `No. The last run of "${what}" stopped at ${bad ? describeStep(flow, bad.index) : 'the start'}${bad?.error ? `: ${bad.error}` : ''}.`;
 }
+
+/** A reported reason as a finished sentence: one that already ends in . ? or ! ("What should I do?") is left alone. */
+export const sentence = (t = '') => (/[.?!]\s*$/.test(t) ? t.trim() : `${t.trim()}.`);

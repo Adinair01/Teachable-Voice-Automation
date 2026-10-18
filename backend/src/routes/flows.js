@@ -17,6 +17,7 @@ const step = z.object({
   value: z.string().max(500).default(''),
   sensitive: z.boolean().default(false),
   expect: z.object({ package: z.string().default(''), textContains: z.string().default('') }).default({}),
+  optional: z.boolean().default(false),
 });
 export const flowInput = z.object({
   intentKey: z.string().min(1).max(80),
