@@ -235,6 +235,8 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                 val result = when (cmd) {
                     "dump" -> dump()
                     // For tools/up.sh: is the voice assistant running and connected to the backend right now?
+                    // The assistant's own log (heard, said, did): it survives the system log rolling over.
+                    "log" -> com.tva.teachable.AppState.log.value.joinToString("\n")
                     "status" -> "voice=${com.tva.teachable.voice.VoiceService.instance != null} connected=${com.tva.teachable.AppState.connected.value} teaching=${com.tva.teachable.AppState.teaching.value}"
                     "tap" -> withNode(sel, forTap = true) { t, n -> tap(t, n) }.toString()
                     "type" -> withNode(sel, forTap = false) { t, n -> type(t, n, i.getStringExtra("value").orEmpty()) }.toString()

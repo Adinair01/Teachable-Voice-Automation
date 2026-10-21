@@ -106,4 +106,11 @@ class ScreenGuardTest {
         val menu = screen(nodes = arrayOf(t("Domino's Pizza"), t("1 item added"), t("Continue"), t("Add items worth \u20b980 or more to unlock")))
         assertNull(ScreenGuard.readyToPay(menu))
     }
+
+    @Test fun anAmazonCartIsWhereAnOrderEnds() {
+        val nodes = screen(nodes = arrayOf(t("Subtotal ₹1,29,999"), t("Proceed to Buy (1 item)"), t("Samsung Galaxy S25 Ultra")))
+        assertEquals(BoundaryKind.PAYMENT, ScreenGuard.readyToPay(nodes)?.kind)
+        // ...and a product page is not.
+        assertNull(ScreenGuard.readyToPay(screen(nodes = arrayOf(t("Add to cart"), t("Buy Now"), t("Samsung Galaxy S25 Ultra")))))
+    }
 }

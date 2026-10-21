@@ -277,3 +277,16 @@ test('a key tapped by mistake before the number stays a plain step, and single k
   assert.deepEqual(f.missing, []);
   assert.deepEqual(f.steps.map((s) => s.selector.text || s.selector.contentDesc || s.type), ['launch', '3', '{{num1}}', 'Divide', '{{num2}}', 'Equals']);
 });
+
+test('a row anchored on a long product title keeps only the item (Amazon, seen live)', () => {
+  const f = generalise({ command: 'Order a s 25 ultra from Amazon', intentKey: 'order', slots: { item: 's 25 ultra' },
+    steps: [{ type: 'launch', value: 'in.amazon.mShop.android.shopping' },
+      { type: 'tap', selector: { text: 'Add to cart', className: 'android.widget.Button' }, candidates: 4,
+        context: ['Sponsored Ad - Samsung Galaxy S25 Ultra 5G AI Smartphone (Titanium Silverblue, 12GB RAM, 256GB Storage)', '₹1,29,999', 'Add to cart'] }] });
+  assert.equal(f.steps[1].selector.near, '{{item}}');
+  assert.equal(f.steps[1].slotRef, 'item');
+  // A short caption keeps its own wording, as before.
+  const g = generalise({ command: 'order a margherita', intentKey: 'order', slots: { item: 'margherita' },
+    steps: [{ type: 'launch', value: 'z' }, { type: 'tap', selector: { contentDesc: 'ADD' }, candidates: 6, context: ['Margherita Pizza', '₹114', 'ADD'] }] });
+  assert.equal(g.steps[1].selector.near, '{{item}} Pizza');
+});

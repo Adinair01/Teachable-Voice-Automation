@@ -87,7 +87,9 @@ object ScreenGuard {
     private val CHECKOUT_EVIDENCE = Regex(
         "pay using|bill details|item total|grand total|to pay|order total|delivery (fee|charge)|taxes and charges|place order" +
             // The cart before a delivery address is chosen (seen live): no pay bar yet, but the address step IS the hand-over.
-            "|(select|add) address at next step|zomato money balance",
+            "|(select|add) address at next step|zomato money balance" +
+            // A shopping cart (Amazon): the subtotal and its checkout button.
+            "|subtotal|proceed to buy",
         RegexOption.IGNORE_CASE,
     )
 

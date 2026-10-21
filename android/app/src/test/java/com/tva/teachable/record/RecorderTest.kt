@@ -103,4 +103,11 @@ class RecorderTest {
         assertEquals("PAYMENT", ended)
         assertEquals(listOf("View cart", "Proceed to pay"), taps(r))
     }
+
+    @Test fun `N - a sale banner tapped during a demo (Amazon's Great Indian Festival) is not a step`() {
+        val r = recorder()
+        val s = screen("Add to cart", "Great Indian Festival", "Big Billion Days", "Proceed to Buy")
+        for (i in 0..3) r.tap(s, i)
+        assertEquals(listOf("Add to cart", "Proceed to Buy"), taps(r))
+    }
 }

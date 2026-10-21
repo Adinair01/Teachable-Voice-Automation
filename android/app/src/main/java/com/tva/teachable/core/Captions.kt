@@ -80,9 +80,13 @@ object Interruptions {
         "^(close|skip|not now|maybe later|no thanks|got it|dismiss|later|[×✕x]|thanks|thank you|woohoo!? ?thanks|awesome|great)$",
         RegexOption.IGNORE_CASE,
     )
-    /** Promotions a demo may wander into: applying a coupon, opening an offer. Never part of the task asked for. */
+    /**
+     * Promotions a demo may wander into: applying a coupon, opening an offer, a sale banner ("Great Indian Festival",
+     * tapped in a live Amazon demo). Never part of the task asked for.
+     */
     private val PROMO = Regex(
-        "^(apply|apply coupon|apply code|view (all )?offers|offers for you|offers?|claim( now| offer)?|unlock .*|.*\\b\\d{1,2}% off\\b.*|.*\\bcoupons?\\b.*)$",
+        "^(apply|apply coupon|apply code|view (all )?offers|offers for you|offers?|claim( now| offer)?|unlock .*|.*\\b\\d{1,2}% off\\b.*|.*\\bcoupons?\\b.*" +
+            "|.*\\b(festival|cashback|lightning deals?|limited time deals?|deal of the day|big billion days?|prime day|mega sale|great indian)\\b.*)$",
         RegexOption.IGNORE_CASE,
     )
 

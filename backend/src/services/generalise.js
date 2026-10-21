@@ -94,6 +94,19 @@ function captionTemplate(text, example, slot) {
   return hit.text.slice(0, hit.text.indexOf(token) + token.length).trim();
 }
 
+/** More words than this around the value, and a row caption describes one product, not the kind of row. */
+const NEAR_EXTRA_WORDS = 2;
+
+/**
+ * The row anchor kept for a tap. A short caption keeps its wording ("{{item}} Pizza"); a long one is a product title
+ * — "Sponsored Ad - Samsung Galaxy {{item}} 5G AI Smartphone (Titanium Silverblue, 12GB…" (Amazon, seen live) — whose
+ * other words belong to that one listing, so the anchor is the value alone and replay finds the row naming it.
+ */
+function anchorOf(near, slot) {
+  const extra = near.replace(`{{${slot}}}`, ' ').split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length;
+  return extra > NEAR_EXTRA_WORDS ? `{{${slot}}}` : near;
+}
+
 /**
  * The forms a spoken value can take in a demonstration: as said, and as digits when it is a number ("five" was spoken,
  * the key pressed was "5"). Which form a model writes depends on which model answered, so both are looked for.
@@ -209,7 +222,7 @@ export function generalise({ command, intentKey, slots, steps: recorded }) {
     if (step.type === 'tap' && context.length && !step.slotRef && (candidates > 1 || !identifies(sel))) {
       for (const [slot, example] of slotEntries) {
         const near = find(slot, example, (f) => context.map((c) => tokenise(c, f, slot)).filter(Boolean).sort((a, b) => a.length - b.length)[0]);
-        if (near) { sel.near = near; step.slotRef ??= slot; break; }
+        if (near) { sel.near = anchorOf(near, slot); step.slotRef ??= slot; break; }
       }
     }
     if (step.type === 'tap' && step.slotRef) {
