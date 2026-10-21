@@ -1,6 +1,7 @@
 package com.tva.teachable.a11y
 
 import android.graphics.Rect
+import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import com.tva.teachable.core.UiNode
 
@@ -50,6 +51,18 @@ object UiTreeReader {
         if (nodes.size >= MAX_NODES) return
         nodes += toUiNode(n, nodes.size, depth)
         handles += n
-        for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1, nodes, handles) }
+        for (i in 0 until n.childCount) child(n, i)?.let { walk(it, depth + 1, nodes, handles) }
     }
+
+    /**
+     * One child, fetched together with its descendants on Android 13+, uninterrupted. Measured on the device for
+     * Zomato's 397-node screen: 532-1614 ms one node at a time, 409-812 ms with this. Zomato's animations keep
+     * invalidating the accessibility cache, so most nodes still cost one request each; while teaching every tap waits
+     * for this read before it reaches the app.
+     */
+    private fun child(n: AccessibilityNodeInfo, i: Int): AccessibilityNodeInfo? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) n.getChild(i, PREFETCH) else n.getChild(i)
+
+    /** The prefetching strategy for every fetch of the tree (Android 13+). */
+    val PREFETCH = AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_DEPTH_FIRST or AccessibilityNodeInfo.FLAG_PREFETCH_UNINTERRUPTIBLE
 }

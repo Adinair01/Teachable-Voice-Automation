@@ -1,5 +1,6 @@
 package com.tva.teachable.a11y
 
+import android.os.Build
 import android.accessibilityservice.AccessibilityService
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -81,10 +82,11 @@ class TvaAccessibilityService : AccessibilityService(), Device {
      * the active one would show the popup and hide the page under it.
      */
     override fun tree(): LiveTree {
-        val active = rootInActiveWindow ?: return UiTreeReader.readLive(null)
+        val prefetch = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        val active = (if (prefetch) getRootInActiveWindow(UiTreeReader.PREFETCH) else rootInActiveWindow) ?: return UiTreeReader.readLive(null)
         val pkg = active.packageName
         val roots = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            .mapNotNull { it.root }.filter { it.packageName == pkg }
+            .mapNotNull { if (prefetch) it.getRoot(UiTreeReader.PREFETCH) else it.root }.filter { it.packageName == pkg }
         return UiTreeReader.readLive(roots.ifEmpty { listOf(active) })
     }
     override fun launch(packageName: String): Boolean {
@@ -115,9 +117,13 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     /** Reads the screen BEFORE the tap is delivered, records the element under the finger, then lets the tap through. */
     private fun onTeachTap(x: Int, y: Int, deliver: () -> Unit) {
         scope.launch(recordLane) {
+            val t0 = android.os.SystemClock.uptimeMillis()
             try { if (!overKeyboardOrSystemUi(x, y)) recorder?.onUserTap(tree().nodes, x, y) }
             catch (e: Exception) { Log.e(TAG, "teach: could not record tap", e) }
-            finally { deliver() }
+            finally {
+                if (BuildConfig.DEBUG) Log.d(TAG, "teach: tap held ${android.os.SystemClock.uptimeMillis() - t0} ms before delivery")
+                deliver()
+            }
         }
     }
 
@@ -191,7 +197,9 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     }
 
     private fun dump(): String {
+        val t0 = android.os.SystemClock.uptimeMillis()
         val nodes = tree().nodes
+        val readMs = android.os.SystemClock.uptimeMillis() - t0
         val arr = JSONArray()
         nodes.forEach {
             arr.put(JSONObject().put("i", it.index).put("d", it.depth).put("pkg", it.packageName)
@@ -200,7 +208,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                 .put("edit", it.editable).put("scroll", it.scrollable).put("z", it.drawingOrder).put("vis", it.visibleToUser))
         }
         File(filesDir, "dump.json").writeText(arr.toString())
-        return "nodes=${nodes.size} pkg=${nodes.firstOrNull()?.packageName}"
+        return "nodes=${nodes.size} pkg=${nodes.firstOrNull()?.packageName} readMs=$readMs"
     }
 
     companion object {
