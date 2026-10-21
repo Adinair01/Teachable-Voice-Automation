@@ -56,4 +56,12 @@ class AnswerParserTest {
         assertEquals(Answer.Retry, a("okay"))
         assertEquals(Answer.Retry, a("yes"))
     }
+
+    @Test fun repliesFromTheLiveSessionOf2026_10_21() {
+        assertEquals(Answer.Retry, a("Done. Done."))                         // was a tap on "done done"
+        val chained = a("tap select address at next step button and just select home") as Answer.Tap
+        assertEquals("select address at next step", chained.spoken)          // the caption's own "select" is kept
+        assertEquals(listOf("home"), chained.then)                           // was one 55-character "caption"
+        assertEquals(Answer.Tap("bottom"), a("Click bottom button."))
+    }
 }

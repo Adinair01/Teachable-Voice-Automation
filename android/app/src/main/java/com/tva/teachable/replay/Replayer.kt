@@ -593,37 +593,22 @@ class Replayer(
                     r = if (cause == StuckCause.CART_CONFLICT) addAnother(i, step, slots) else runStep(i, step, next, slots)
                     if (r.ok || r.cause == null) return r
                 }
-                is Answer.Tap -> {
-                    val located = locateNamed(a.caption)
-                    val tree = located?.first ?: device.tree()
-                    val node = located?.second
-                    val caption = node?.let { it.text.ifBlank { it.contentDesc } }.orEmpty()
-                    when {
-                        node == null -> note = "I can't see \"${a.caption}\" on this screen."
-                        CartState.DESTRUCTIVE.containsMatchIn("${node.text} ${node.contentDesc}") ->
-                            note = "I won't tap \"$caption\" myself, it could throw your cart away."
-                        else -> {
-                            ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
-                            val sel = portable(TapTarget.selector(tree.nodes, node))
-                            val before = signature(tree)
-                            if (!tap(tree, node)) {
-                                note = "I couldn't tap \"$caption\"."
-                            } else {
-                                poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
-                                // The tap may simply have cleared the way: if the taught control is there now, run the
-                                // step as taught. Only a plain tap may be REPLACED by the user's tap — a typing step
-                                // that is still missing its field is still not done.
-                                val taughtIsBack = probeFor(step.type, resolved(step.selector, slots), step.slotRef?.let { slots[it] })(device.tree()) != null
-                                if (taughtIsBack || step.type != StepType.TAP) {
-                                    val again = runStep(i, step, next, slots)
-                                    if (again.ok) record(i, step, cause, a, null, caption, clearedTheWay = true)
-                                    if (again.ok || again.cause == null) return again
-                                    r = again
-                                } else {
-                                    record(i, step, cause, a, sel, caption)
-                                    return StepResult(i, true, error = "done as you told me: tapped \"$caption\"")
-                                }
-                            }
+                is Answer.Tap -> when (val t = tapNamed(a)) {
+                    is Named.Refused -> note = t.why
+                    is Named.Boundary -> return handover(i, t.boundary)
+                    is Named.Tapped -> {
+                        // The tap may simply have cleared the way: if the taught control is there now, run the step as
+                        // taught. Only a plain tap may be REPLACED by the user's tap — a typing step that is still
+                        // missing its field is still not done. Several taps in one reply are for this run only.
+                        val taughtIsBack = probeFor(step.type, resolved(step.selector, slots), step.slotRef?.let { slots[it] })(device.tree()) != null
+                        if (taughtIsBack || step.type != StepType.TAP) {
+                            val again = runStep(i, step, next, slots)
+                            if (again.ok) record(i, step, cause, a, null, t.caption, clearedTheWay = true)
+                            if (again.ok || again.cause == null) return again
+                            r = again
+                        } else {
+                            if (a.then.isEmpty()) record(i, step, cause, a, t.selector, t.caption)
+                            return StepResult(i, true, error = "done as you told me: tapped \"${t.caption}\"")
                         }
                     }
                 }
@@ -653,27 +638,16 @@ class Replayer(
                 Answer.Stop, Answer.Skip -> return null
                 Answer.Unclear -> note = "Sorry, I didn't understand that."
                 Answer.Retry -> reachedCheckout()?.let { return it } // they took me there themselves
-                is Answer.Tap -> {
-                    val located = locateNamed(a.caption)
-                    val tree = located?.first ?: device.tree()
-                    val node = located?.second
-                    val caption = node?.let { it.text.ifBlank { it.contentDesc } }.orEmpty()
-                    when {
-                        node == null -> note = "I can't see \"${a.caption}\" on this screen."
-                        CartState.DESTRUCTIVE.containsMatchIn("${node.text} ${node.contentDesc}") -> note = "I won't tap \"$caption\" myself, it could throw your cart away."
-                        else -> {
-                            ScreenGuard.action(tree.nodes, node)?.let { return it }
-                            val sel = portable(TapTarget.selector(tree.nodes, node))
-                            val before = signature(tree)
-                            tap(tree, node)
-                            poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
-                            val at = reachedCheckout()
-                            if (at != null) {
-                                corrections += Correction(insertAt, CorrectionKind.FLOW_DEFECT, CorrectionOp.INSERT_TAP, "the end of the flow", "tap \"$caption\"", sel)
-                                return at
-                            }
-                            note = "I tapped \"$caption\" but I'm still not on the cart."
+                is Answer.Tap -> when (val t = tapNamed(a)) {
+                    is Named.Refused -> note = t.why
+                    is Named.Boundary -> return t.boundary
+                    is Named.Tapped -> {
+                        val at = reachedCheckout()
+                        if (at != null) {
+                            if (a.then.isEmpty()) corrections += Correction(insertAt, CorrectionKind.FLOW_DEFECT, CorrectionOp.INSERT_TAP, "the end of the flow", "tap \"${t.caption}\"", t.selector)
+                            return at
                         }
+                        note = "I tapped \"${t.caption}\" but I'm still not on the cart."
                     }
                 }
             }
@@ -706,26 +680,79 @@ class Replayer(
      * still found by its caption and still goes through the same guards before anything is tapped. A tree and node from
      * the SAME read are returned, since a node is only tappable through the tree it came from.
      */
-    private suspend fun locateNamed(caption: String): Pair<LiveTree, UiNode>? {
+    private suspend fun locateNamed(caption: String, spoken: String = caption): Pair<LiveTree, UiNode>? {
         var tree = device.tree()
-        answerTarget(tree.nodes, caption)?.let { return tree to it }
+        answerTarget(tree.nodes, caption, spoken)?.let { return tree to it }
         repeat(cfg.scrollTries) {
             if (!device.scroll(tree)) return null
-            poll(cfg.retryMs) { t -> answerTarget(t.nodes, caption)?.let { t to it } }?.let { return it }
+            poll(cfg.retryMs) { t -> answerTarget(t.nodes, caption, spoken)?.let { t to it } }?.let { return it }
             tree = device.tree()
         }
         return null
     }
 
-    /** What the user named, as a control that can really be tapped here: exact caption first, then a unique partial one. */
-    private fun answerTarget(nodes: List<UiNode>, caption: String): UiNode? {
-        SelectorMatcher.target(nodes, Selector(text = caption, contentDesc = caption), null, forTap = true)?.let { return it }
-        val want = RowContext.norm(caption)
-        if (want.length < 3) return null
-        val hits = SelectorMatcher.tappable(nodes).filter { n ->
-            !n.password && listOf(n.text, n.contentDesc).any { c -> RowContext.norm(c).let { it.isNotEmpty() && want in it } }
+    /** What came of tapping what the user named. */
+    private sealed interface Named {
+        data class Tapped(val caption: String, val selector: Selector) : Named
+        data class Refused(val why: String) : Named
+        data class Boundary(val boundary: com.tva.teachable.core.Boundary) : Named
+    }
+
+    /**
+     * Taps what the user named, then each tap they chained after it ("…and choose Home"), each found afresh on the
+     * screen the previous one led to. Every one goes through the same checks as any tap: found on screen (scrolling if
+     * needed), never destructive, never a payment commit. The first one's caption and selector are returned.
+     */
+    private suspend fun tapNamed(a: Answer.Tap): Named {
+        var first: Named.Tapped? = null
+        for ((k, caption) in (listOf(a.caption) + a.then).withIndex()) {
+            val located = locateNamed(caption, if (k == 0) a.spoken else caption)
+            val prefix = first?.let { "I tapped \"${it.caption}\", but " }.orEmpty()
+            val (tree, node) = located ?: return Named.Refused("${prefix}I can't see \"$caption\" on this screen.")
+            val shown = node.text.ifBlank { node.contentDesc }.ifBlank { caption }
+            if (CartState.DESTRUCTIVE.containsMatchIn("${node.text} ${node.contentDesc}")) return Named.Refused("${prefix}I won't tap \"$shown\" myself, it could throw your cart away.")
+            ScreenGuard.action(tree.nodes, node)?.let { return Named.Boundary(it) }
+            val before = signature(tree)
+            if (!tap(tree, node)) return Named.Refused("${prefix}I couldn't tap \"$shown\".")
+            poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
+            if (first == null) first = Named.Tapped(shown, portable(TapTarget.selector(tree.nodes, node)))
         }
-        return hits.singleOrNull()
+        return first!!
+    }
+
+    /**
+     * What the user named, as a control that can really be tapped here, tried in this order: the caption as named; the
+     * request with its verb kept ("select address at next step" IS the caption "Select address at next step"); a
+     * unique caption containing it; the caption whose words are ALL in what was said ("tap the select address at next
+     * step button" names "Select address at next step"), the fullest such caption, a tie being no answer; and a
+     * position ("the bottom button": the lowest captioned control).
+     */
+    private fun answerTarget(nodes: List<UiNode>, caption: String, spoken: String = caption): UiNode? {
+        for (c in listOf(caption, spoken).distinct()) {
+            SelectorMatcher.target(nodes, Selector(text = c, contentDesc = c), null, forTap = true)?.let { return it }
+        }
+        val tappable = SelectorMatcher.tappable(nodes).filter { !it.password && it.text.ifBlank { it.contentDesc }.isNotBlank() }
+        val want = RowContext.norm(caption)
+        if (want.length >= 3) tappable.filter { n -> listOf(n.text, n.contentDesc).any { RowContext.norm(it).let { c -> c.isNotEmpty() && want in c } } }.singleOrNull()?.let { return it }
+        val said = Captions.words(spoken).toSet()
+        val covered = tappable.mapNotNull { n ->
+            val w = Captions.words(n.text.ifBlank { n.contentDesc })
+            if (w.size >= 2 && said.containsAll(w)) n to w else null
+        }
+        covered.maxOfOrNull { it.second.size }?.let { most ->
+            val top = covered.filter { it.second.size == most }
+            if (top.map { it.second }.distinct().size == 1) return top.first().first
+        }
+        return positional(tappable, caption)
+    }
+
+    /** "bottom", "the bottom one", "top", "first", "last": the captioned control at that end of the screen. */
+    private fun positional(tappable: List<UiNode>, caption: String): UiNode? {
+        val edge = POSITION.matchEntire(caption)?.groupValues?.get(1) ?: return null
+        val placed = tappable.mapNotNull { n -> n.bounds.split(' ').mapNotNull { it.toIntOrNull() }.takeIf { it.size == 4 }?.let { n to it } }
+        // Later in the tree = drawn on top, so of two at the same height the visible one wins.
+        return if (edge == "bottom" || edge == "last") placed.withIndex().maxWithOrNull(compareBy({ it.value.second[3] }, { it.index }))?.value?.first
+        else placed.withIndex().minWithOrNull(compareBy({ it.value.second[1] }, { -it.index }))?.value?.first
     }
 
     /** A selector learned from an answer prefers its caption to a resource id: ids like button1 are layout accidents. */
@@ -901,6 +928,7 @@ class Replayer(
         /** Below this much budget the LLM picker is not asked: its answer could not arrive before the question is due. */
         const val MIN_PICK_MS = 1500L
         const val SUBTREE_MAX = 30
+        val POSITION = Regex("(?:at )?(?:the )?(bottom|top|first|last)(?: (?:one|of the screen))?")
         val DISMISS = Regex("^(close|skip|not now|maybe later|no thanks|got it|ok|okay|allow|cancel|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
         // Benign pass-through controls an upsell/interstitial can sit behind, on top of the cart ("Add items worth ₹X…
         // Continue"). Only ever tapped when ScreenGuard clears it, so a genuine "Continue to pay" is still handed over.

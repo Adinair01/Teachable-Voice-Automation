@@ -61,7 +61,7 @@ class ExpectScreenTest {
         assertTrue(!r.success)
         // A specific question, not "expected screen not reached": what was tapped, what was expected, what is there.
         assertEquals(
-            "I tapped \"Details\", but the screen that opened doesn't mention \"Farmhouse pizza\". It shows \"Details\", \"Double Cheese Margherita\". Is this the wrong place?",
+            "I tapped \"Details\", but the screen that opened doesn't mention \"Farmhouse pizza\". It shows \"Double Cheese Margherita\", \"Details\". Is this the wrong place?",
             r.steps.last().error,
         )
         assertTrue("it is a question the run can ask", r.steps.last().cause != null)

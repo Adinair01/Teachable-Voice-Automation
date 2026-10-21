@@ -9,8 +9,15 @@ object ScreenSummary {
     private val DIGIT_RUN = Regex("\\d{4,}")
     private const val MAX_LABEL = 28
 
+    /**
+     * Labels from the page the user is LOOKING at. Apps like Zomato keep the previous page in the accessibility tree
+     * and add the new one after it, so reading from the top described the page underneath (seen live: the menu's
+     * dishes were read out while the cart was on screen). Read from the end, tappable controls first: what the user
+     * can see and could name in an answer.
+     */
     fun of(nodes: List<UiNode>, max: Int = 4): String {
-        val labels = nodes.asSequence()
+        val tappable = SelectorMatcher.tappable(nodes).toSet()
+        val labels = nodes.asReversed().sortedBy { if (it in tappable) 0 else 1 }.asSequence()
             .filter { !it.password && !it.editable }
             .flatMap { sequenceOf(it.text, it.contentDesc) }
             .map { it.trim() }

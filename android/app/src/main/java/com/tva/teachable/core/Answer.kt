@@ -8,8 +8,17 @@ sealed interface Answer {
     data object Skip : Answer
     /** "Yes", "I'm back", "try again": look again (or, for a cart question, add another). */
     data object Retry : Answer
-    /** Tap the control captioned [caption] instead. */
-    data class Tap(val caption: String) : Answer
+    /**
+     * Tap the control captioned [caption] instead. [spoken] is the same request with its verb kept ("select address at
+     * next step"), because a caption can start with the very verb the user used. [then] are further taps chained with
+     * "and" ("…and choose Home"), done in order. Neither is part of equality: they describe the same request.
+     */
+    data class Tap(val caption: String) : Answer {
+        var spoken: String = caption
+            internal set
+        var then: List<String> = emptyList()
+            internal set
+    }
     /** Nothing usable was said. */
     data object Unclear : Answer
 }
@@ -32,18 +41,35 @@ object AnswerParser {
     // Words people put around an answer: "okay, skip it", "please just stop", "um tap Continue".
     private val FILLER = Regex("^((please|just|ok|okay|um|uh|so|then|yeah|hey|now|alright|right|fine)\\s+)+|(\\s+(please|now|then|thanks|thank you))+$")
 
+    // "…and choose Home", "…and then tap Continue": a second tap in the same reply.
+    private val CHAIN = Regex("\\s+and\\s+(?:then\\s+)?(?:just\\s+)?(?=(?:tap|press|click|select|choose|hit|pick|touch|open)\\b)")
+    // Said twice under pressure ("done done", "skip skip it"): one word repeated is one word.
+    private val REPEATED = Regex("\\b(\\w+)(\\s+\\1\\b)+")
+
     fun parse(raw: String): Answer {
         val spoken = raw.lowercase().replace(Regex("[\\p{P}&&[^'&]]"), " ").replace(Regex("\\s+"), " ").trim()
+            .replace(REPEATED, "$1")
         if (spoken.isEmpty()) return Answer.Unclear
         // A bare "okay" or "yes" is itself an answer (try again); only words AROUND an answer are filler.
         val t = FILLER.replace(spoken, "").trim().ifEmpty { spoken }
         if (STOP.matches(t)) return Answer.Stop
         if (SKIP.matches(t)) return Answer.Skip
         if (RETRY.matches(t)) return Answer.Retry
-        var caption = LEAD.replace(t, "").trim()
+        val parts = t.split(CHAIN).map { it.trim() }.filter { it.isNotEmpty() }
+        val first = caption(parts.first()) ?: return Answer.Unclear
+        val rest = parts.drop(1).map { caption(it) ?: return Answer.Unclear }
+        return Answer.Tap(first).apply { this.spoken = verbKept(parts.first()); this.then = rest }
+    }
+
+    /** One requested tap, reduced to the caption it names; null if it is a whole sentence rather than a caption. */
+    private fun caption(part: String): String? {
+        var caption = LEAD.replace(part, "").trim()
         repeat(2) { caption = DETERMINER.replace(caption, "").trim() }
         caption = TRAIL.replace(caption, "").trim()
         // A whole sentence is not a caption; asking again beats tapping the nearest thing to it.
-        return if (caption.isEmpty() || caption.length > MAX_CAPTION) Answer.Unclear else Answer.Tap(caption)
+        return caption.takeIf { it.isNotEmpty() && it.length <= MAX_CAPTION }
     }
+
+    /** The request with only "tap"/"press"/"click" dropped: "select address at next step" keeps its "select". */
+    private fun verbKept(part: String) = TRAIL.replace(Regex("^(please )?(can you |could you )?(tap|press|click|hit|touch)( on)?( the)? ").replace(part, ""), "").trim()
 }

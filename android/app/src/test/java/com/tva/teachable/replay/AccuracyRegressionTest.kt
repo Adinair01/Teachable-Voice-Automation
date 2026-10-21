@@ -240,4 +240,54 @@ class AccuracyRegressionTest {
         }
         assertEquals(listOf("1/2 tapping Margherita pizza", "2/2 tapping Next"), seen)
     }
+
+    // ---- answers to a question, as given in the live session of 2026-10-21 ----
+
+    /** The cart, with Zomato's previous page (the menu) still in the tree BEFORE it, as the app really does. */
+    private inner class Cart : Device {
+        val tapped = ArrayList<String>()
+        var picker = false
+        override fun tree(): LiveTree {
+            val menu = listOf(row(1, text = "Unlock Flat ₹125 OFF"), row(1, text = "Cheese Volcano Farmhouse"), row(1, desc = "ADD", click = true))
+            val page = if (!picker) listOf(row(1, text = "Bill details"), listOf(1, "", "Select address at next step", "", true))
+                else listOf(row(1, text = "Select an address"), row(1, text = "Home", click = true), row(1, text = "Work", click = true))
+            return LiveTree(tree(row(0), *menu.toTypedArray(), *page.toTypedArray()).map { it.copy(bounds = "0 ${it.index * 100} 1000 ${it.index * 100 + 90}") }, emptyList())
+        }
+        override fun tap(tree: LiveTree, node: UiNode): Boolean {
+            val c = node.text.ifBlank { node.contentDesc }; tapped += c
+            if (c == "Select address at next step") picker = true
+            return true
+        }
+        override fun launch(packageName: String) = true
+        override fun type(tree: LiveTree, node: UiNode, value: String) = true
+        override fun scroll(tree: LiveTree) = false
+        override fun back() = true
+    }
+
+    private fun answered(reply: String, device: Cart = Cart()): Pair<Cart, List<String>> {
+        val questions = ArrayList<String>()
+        var replies = listOf(reply)
+        runBlocking {
+            Replayer(device, cfg = fast, asker = { q -> questions += q.spoken; replies.firstOrNull().also { replies = replies.drop(1) } })
+                .run(Flow("k", "d", z, listOf(FlowStep(StepType.TAP, Selector(text = "APPLY")))), emptyMap())
+        }
+        return device to questions
+    }
+
+    @Test fun `answer - "tap select address at next step button and just select home" taps both, in order`() {
+        // Before: "I can't see "select address at next step button and just sel…" on this screen."
+        val (cart, _) = answered("tap select address at next step button and just select home")
+        assertEquals(listOf("Select address at next step", "Home"), cart.tapped)
+    }
+
+    @Test fun `answer - "click bottom button" taps the lowest control of the page on top`() {
+        val (cart, _) = answered("Click bottom button.")
+        assertEquals(listOf("Select address at next step"), cart.tapped)
+    }
+
+    @Test fun `the question describes the page on top, not the menu under the cart`() {
+        val (_, questions) = answered("stop")
+        // Before: "This screen shows "Unlock Flat ₹125 OFF", "ADD", "₹355", "Cheese Volcano Farmhouse"" on the cart.
+        assertTrue(questions.first(), questions.first().contains("This screen shows \"Select address at next step\""))
+    }
 }

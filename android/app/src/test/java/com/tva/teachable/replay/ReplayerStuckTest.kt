@@ -63,7 +63,8 @@ class ReplayerStuckTest {
             UiNode(3, 1, "p", "", "work", "", "", "", true, false, false, false),
             UiNode(4, 1, "p", "", "F205,F block, Abode Valley, Potheri, Chennai", "", "", "", false, false, false, false),
         )
-        assertEquals("\"Work\"", ScreenSummary.of(nodes))
+        // Read from the visible end of the screen; "Work"/"work" is one label. No phone number, password or address line.
+        assertEquals("\"work\"", ScreenSummary.of(nodes))
         assertEquals("nothing I can read", ScreenSummary.of(emptyList()))
     }
 }
