@@ -64,6 +64,21 @@ const runResult = z.object({
   // What the user's answers to "what should I do?" imply for the flow. Offered, never applied, until they say yes.
   corrections: z.array(correctionInput).max(20).default([]),
 });
+/**
+ * Why a demonstration could not be learned when a value that was SAID was never DONE: both sides, in words. Seen live:
+ * "seventy five minus ten" was heard while 4, 5, −, 5, 5 was tapped, and "I couldn't find 75 in what you did" left the
+ * user unable to tell what had gone wrong.
+ */
+export function mismatchLine(missing, steps) {
+  const did = steps.filter((st) => st.type === 'tap' || st.type === 'type')
+    .map((st) => (st.type === 'type' ? `typed ${st.value}` : (st.selector?.text || st.selector?.contentDesc || '').trim()))
+    .filter(Boolean);
+  const shown = did.length > 8 ? [...did.slice(0, 8), '…'] : did;
+  const said = missing.map((v) => `"${v}"`).join(' and ');
+  return `I heard you say ${said}, but that isn't in what you did${shown.length ? `: you tapped ${shown.join(', ')}` : ''}. `
+    + "So I haven't saved anything. Say the command again, and do exactly what you say.";
+}
+
 const fingerprint = (steps) => createHash('sha1').update(JSON.stringify(steps)).digest('hex');
 
 /** Everything the session reads or writes outside itself. Replaced in tests, so the whole chain runs without Mongo or Groq. */
@@ -295,7 +310,7 @@ export class Session {
       await this.#logLearn(false, body.command, undefined, heard);
       this.send({ type: 'teach_failed' }); // lets the phone drop out of "Saving…" instead of hanging there
       return this.say(g.missing.length && actionable >= 1
-        ? `I couldn't find "${g.missing[0].example}" in what you did, so I haven't saved anything. Say the command again to show me from the start.`
+        ? mismatchLine(g.missing.map((m) => m.example), body.steps)
         : actionable === 0 && g.steps.length
           ? "I only saw an app being opened. To open an app, just say open and its name. Teach me a task inside the app instead."
           : "I didn't see any actions, so there's nothing to save. Say the command again when you want to show me.");

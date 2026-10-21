@@ -79,7 +79,7 @@ test('a teach whose demo never used the named dish is REFUSED (it would replay t
     { type: 'type', selector: { resourceId: 'z:id/edittext' }, value: 'chicken wings' }];
   await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'teach_done', command: 'x', intentKey: 'order', slots: h.s.teaching.slots, steps })));
   assert.equal(h.store.length, 0, 'nothing saved');
-  assert.match(h.said().at(-1), /couldn't find "paneer tikka"/);
+  assert.match(h.said().at(-1), /I heard you say "paneer tikka", but that isn't in what you did/);
 });
 
 // ---- C: a pending question never swallows a new command ----
@@ -277,4 +277,13 @@ test('a run the user ended with a new task stays silent (the new command speaks)
   assert.ok(!h.logs.some((l) => l.kind === 'match'), 'not counted as a wrong match');
   await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'run_result', flowId: flow._id, success: false, stopped: true, utterance: 'x', steps: [] })));
   assert.equal(h.said().at(-1), "Okay, I've stopped.");
+});
+
+test('a learn refused because what was said was never done names both: what was heard and what was tapped', async () => {
+  const { mismatchLine } = await import('../src/ws/session.js');
+  // Seen live: "seventy five minus ten" heard, 4, 5, −, 5, 5 tapped.
+  const steps = [{ type: 'launch', value: 'calc' }, ...['Clear', '4', '5', 'Subtract', '5', '5', 'Equals'].map((t) => ({ type: 'tap', selector: { text: t } }))];
+  assert.equal(mismatchLine(['75', '10'], steps),
+    'I heard you say "75" and "10", but that isn\'t in what you did: you tapped Clear, 4, 5, Subtract, 5, 5, Equals. '
+    + "So I haven't saved anything. Say the command again, and do exactly what you say.");
 });
