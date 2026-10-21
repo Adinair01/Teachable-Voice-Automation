@@ -102,7 +102,17 @@ class Replayer(
         appPackage = flow.appPackage; llmPicks = 0; asked = 0; corrections.clear(); lastTyped = null
         runStart = now(); userTime = 0
         val results = ArrayList<StepResult>()
+        var current = 0
+        return try {
+            runSteps(flow, slots, results) { current = it }
+        } catch (e: AtBoundary) {
+            done(e.boundary.kind == BoundaryKind.PAYMENT, results + handover(current, e.boundary), handover = e.boundary)
+        }
+    }
+
+    private suspend fun runSteps(flow: Flow, slots: Map<String, String>, results: MutableList<StepResult>, at: (Int) -> Unit): RunResult {
         for ((i, step) in flow.steps.withIndex()) {
+            at(i)
             if (now() - runStart - userTime > cfg.runCapMs) {
                 val err = "This has taken over ${cfg.runCapMs / 60_000} minutes of trying, so I've stopped at step ${i + 1} instead of carrying on."
                 return done(false, results + StepResult(i, false, error = err))
@@ -131,6 +141,18 @@ class Replayer(
         return done(true, results, handover = handover)
     }
 
+    /** A payment, OTP, login or password screen appeared: the run ends there, whatever it was in the middle of. */
+    private class AtBoundary(val boundary: Boundary) : Exception()
+
+    /**
+     * Every tap and every typed text goes through here. The screen is read afresh and, if it has become a payment /
+     * OTP / login / password screen, nothing is touched and the run hands over — however it got there (a "Proceed to
+     * pay" just tapped, an app that jumped ahead) and whichever path wanted to act (a step, a retry, an answer).
+     */
+    private fun tap(tree: LiveTree, node: UiNode): Boolean { guard(); return device.tap(tree, node) }
+    private fun type(tree: LiveTree, node: UiNode, value: String): Boolean { guard(); return device.type(tree, node, value) }
+    private fun guard() { ScreenGuard.screen(device.tree().nodes)?.let { throw AtBoundary(it) } }
+
     private fun done(success: Boolean, steps: List<StepResult>, declined: Boolean = false, handover: Boundary? = null) =
         RunResult(success, steps, declined, handover, corrections.toList(), asked)
 
@@ -145,8 +167,11 @@ class Replayer(
         if (step.type != StepType.LAUNCH && step.type != StepType.WAIT) {
             ScreenGuard.screen(device.tree().nodes)?.let { return handover(i, it) }
         }
-        if (step.type == StepType.TAP) ScreenGuard.actionText("${step.selector.text} ${step.selector.contentDesc}")?.let { return handover(i, it) }
-        if (step.sensitive && !gate.confirm(step, slots)) return StepResult(i, false, error = "sensitive step not confirmed", declined = true)
+        // "Proceed to pay" / "Select payment method" only open the payment page, which the run then stops on: tapped
+        // unattended (T2 reaches payment) and without the confirmation a committing step needs. Nothing else is.
+        val entry = step.type == StepType.TAP && ScreenGuard.isPaymentEntry(step.selector.text.ifBlank { step.selector.contentDesc })
+        if (step.type == StepType.TAP && !entry) ScreenGuard.actionText("${step.selector.text} ${step.selector.contentDesc}")?.let { return handover(i, it) }
+        if (step.sensitive && !entry && !gate.confirm(step, slots)) return StepResult(i, false, error = "sensitive step not confirmed", declined = true)
         val value = resolveSlots(step.value, slots)
         val slotValue = step.slotRef?.let { slots[it] }?.trim().orEmpty()
         return when (step.type) {
@@ -282,20 +307,20 @@ class Replayer(
             accepted?.let { found = tree to it; fallback = true; llmPicks++ }
         }
         var (tree, node) = found ?: return stuckResult(i, step, sel, targetLabel(step, sel))
-        if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
+        if (isTap && !ScreenGuard.entersPayment(tree.nodes, node)) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
         if (isTap) destroys(tree, node, step)?.let { return refused(i, step, sel, it) }
         var before = signature(tree)
-        var acted = if (isTap) device.tap(tree, node) else typeAndVerify(tree, node, sel, value)
+        var acted = if (isTap) tap(tree, node) else typeAndVerify(tree, node, sel, value)
         if (!acted) {
             // A node can go stale between being read and acted on — a suggestion list that is still refreshing as it
             // loads (seen live: the restaurant suggestion was found, then refused the click). Look again, once, and
             // run the same guards on whatever is found now.
             delay(cfg.pollMs)
             poll(cfg.retryMs, probe)?.let { (t2, n2) ->
-                if (isTap) ScreenGuard.action(t2.nodes, n2)?.let { return handover(i, it) }
+                if (isTap && !ScreenGuard.entersPayment(t2.nodes, n2)) ScreenGuard.action(t2.nodes, n2)?.let { return handover(i, it) }
                 if (isTap) destroys(t2, n2, step)?.let { return refused(i, step, sel, it) }
                 tree = t2; node = n2; before = signature(t2)
-                acted = if (isTap) device.tap(t2, n2) else typeAndVerify(t2, n2, sel, value)
+                acted = if (isTap) tap(t2, n2) else typeAndVerify(t2, n2, sel, value)
             }
         }
         if (!acted) return couldntAct(i, step, sel, isTap)
@@ -339,11 +364,11 @@ class Replayer(
         val field = SelectorMatcher.target(t.nodes, typed.sel, null, forTap = false) ?: return null
         if (field.password) return null
         android.util.Log.w("TVA", "replay: nothing followed the typed text, entering it once more")
-        if (!device.type(t, field, "")) return null
+        if (!type(t, field, "")) return null
         delay(cfg.pollMs)
         val t2 = device.tree()
         val again = SelectorMatcher.target(t2.nodes, typed.sel, null, forTap = false) ?: return null
-        if (!device.type(t2, again, typed.value)) return null
+        if (!type(t2, again, typed.value)) return null
         return poll(within(cfg.waitMs), probe)
     }
 
@@ -352,7 +377,7 @@ class Replayer(
      * at all, the text is set again.
      */
     private suspend fun typeAndVerify(tree: LiveTree, node: UiNode, sel: Selector, value: String): Boolean {
-        if (node.password) return device.type(tree, node, value) // never read back
+        if (node.password) return type(tree, node, value) // never read back
         // Typing into a screen that is still initialising gets wiped when the field resets: wait for it to settle.
         var t = awaitStable()
         var n = SelectorMatcher.target(t.nodes, sel, null, forTap = false) ?: node.also { t = tree }
@@ -361,7 +386,7 @@ class Replayer(
         // retyping into a field that did react would only restart the search.
         repeat(TYPE_TRIES) {
             val before = signature(t)
-            if (!device.type(t, n, value)) return false
+            if (!type(t, n, value)) return false
             if (poll(cfg.retryMs) { tt -> tt.takeIf { signature(it) != before } } != null) return true
             android.util.Log.w("TVA", "replay: typed text did not show on screen, retrying")
             t = device.tree()
@@ -389,7 +414,7 @@ class Replayer(
             val t = device.tree()
             val key = keyFor(c, t) ?: return StepResult(i, false, error = stuck("the key \"$c\""), cause = StuckCause.SLOT_ABSENT)
             ScreenGuard.action(t.nodes, key)?.let { return handover(i, it) }
-            if (!device.tap(t, key)) return StepResult(i, false, error = "I pressed part of \"$v\" but the key \"$c\" didn't respond. What should I do?", cause = StuckCause.SLOT_ABSENT)
+            if (!tap(t, key)) return StepResult(i, false, error = "I pressed part of \"$v\" but the key \"$c\" didn't respond. What should I do?", cause = StuckCause.SLOT_ABSENT)
             poll(cfg.settleMs) { tt -> tt.takeIf { signature(it) != signature(t) } }
         }
         android.util.Log.i("TVA", "replay: entered \"$v\" one key at a time")
@@ -436,7 +461,7 @@ class Replayer(
             n.clickable && allowed.matches((n.text.ifBlank { n.contentDesc }).trim()) && ScreenGuard.action(t.nodes, n) == null && destroys(t, n, null) == null
         }.minByOrNull { if (Interruptions.isDismissal(it.text.ifBlank { it.contentDesc })) 0 else 1 } ?: return false
         val before = signature(t)
-        device.tap(t, node)
+        tap(t, node)
         return poll(cfg.settleMs) { tt -> tt.takeIf { signature(it) != before } } != null
     }
 
@@ -459,7 +484,7 @@ class Replayer(
             val button = if (s.count < n) s.plus else s.minus
             ScreenGuard.action(t.nodes, button)?.let { return handover(i, it) }
             last = s.count
-            device.tap(t, button)
+            tap(t, button)
             poll(cfg.waitMs) { tt -> Steppers.find(tt.nodes, near, item)?.takeIf { it.count != last } }
         }
         return StepResult(i, false, error = "couldn't set the quantity to $n")
@@ -475,7 +500,7 @@ class Replayer(
         val opener = findOpener()
             ?: (if (passInterstitial()) findOpener() else null)
             ?: return StepResult(i, false, error = "couldn't find where to change the delivery address")
-        device.tap(opener.first, opener.second)
+        tap(opener.first, opener.second)
 
         val isEntry = { n: UiNode -> !n.editable && (n.text.trim().equals(label, true) || n.contentDesc.trim().equals(label, true)) }
         val entry = { t: LiveTree -> t.nodes.firstOrNull(isEntry)?.let { t to it } }
@@ -493,7 +518,7 @@ class Replayer(
             device.back() // close the picker again rather than leave the user in it
             return StepResult(i, false, error = "there's no saved address called \"$label\"")
         }
-        device.tap(tree, node)
+        tap(tree, node)
         if (waitFor(isChosen)) return StepResult(i, true)
         if (entry(device.tree()) != null) device.back() // still in the picker: close it rather than leave the user there
         return StepResult(i, false, error = "the app didn't switch to your \"$label\" address, it may be outside the delivery area")
@@ -578,7 +603,7 @@ class Replayer(
                             ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
                             val sel = portable(TapTarget.selector(tree.nodes, node))
                             val before = signature(tree)
-                            if (!device.tap(tree, node)) {
+                            if (!tap(tree, node)) {
                                 note = "I couldn't tap \"$caption\"."
                             } else {
                                 poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
@@ -637,7 +662,7 @@ class Replayer(
                             ScreenGuard.action(tree.nodes, node)?.let { return it }
                             val sel = portable(TapTarget.selector(tree.nodes, node))
                             val before = signature(tree)
-                            device.tap(tree, node)
+                            tap(tree, node)
                             poll(cfg.settleMs) { t -> t.takeIf { signature(it) != before } }
                             val at = reachedCheckout()
                             if (at != null) {
@@ -669,7 +694,7 @@ class Replayer(
         val plus = Steppers.find(tree.nodes, near, item)?.plus
             ?: return StepResult(i, false, error = "I can't find the + for ${item ?: "it"} any more. Should I leave it as it is?", cause = StuckCause.CART_CONFLICT)
         ScreenGuard.action(tree.nodes, plus)?.let { return handover(i, it) }
-        return if (device.tap(tree, plus)) StepResult(i, true, error = "added another at your request")
+        return if (tap(tree, plus)) StepResult(i, true, error = "added another at your request")
         else StepResult(i, false, error = "I couldn't add another.", cause = StuckCause.CART_CONFLICT)
     }
 

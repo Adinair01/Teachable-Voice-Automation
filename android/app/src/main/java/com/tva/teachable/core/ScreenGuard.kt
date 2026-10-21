@@ -61,6 +61,23 @@ object ScreenGuard {
     fun action(nodes: List<UiNode>, node: UiNode): Boundary? =
         actionText((listOf(node) + subtree(nodes, node)).joinToString(" ") { visible(it) })
 
+    // The two controls that only OPEN the payment page, and nothing more: exact captions, so "Proceed to pay ₹279",
+    // "Pay ₹279" and "Place order" never qualify. Tapping one commits nothing; the page it opens is a [screen] boundary.
+    private val PAYMENT_ENTRY = Regex("^(proceed to pay|select payment method)[\\s›>→]*$", RegexOption.IGNORE_CASE)
+
+    fun isPaymentEntry(caption: String) = PAYMENT_ENTRY.matches(caption.trim())
+
+    /**
+     * [node] is exactly a "Proceed to pay" / "Select payment method" control: its own caption (or its one captioned
+     * child's) is the entry, and nothing else inside it would commit money or an order. The replay may tap it to REACH
+     * the payment page, where it stops. Everything else [action] refuses stays refused.
+     */
+    fun entersPayment(nodes: List<UiNode>, node: UiNode): Boolean {
+        val captions = (listOf(node) + subtree(nodes, node)).map(::visible).filter { it.isNotBlank() }
+        val entry = captions.filter { isPaymentEntry(it) }
+        return entry.isNotEmpty() && (captions - entry.toSet()).none { COMMIT.containsMatchIn(it) }
+    }
+
     /** Same rule on a caption alone (a step's selector), so a payment step hands over before anyone is asked. */
     fun actionText(text: String): Boundary? =
         if (COMMIT.containsMatchIn(text)) Boundary(BoundaryKind.PAYMENT, "would tap \"${text.trim().take(40)}\"") else null
