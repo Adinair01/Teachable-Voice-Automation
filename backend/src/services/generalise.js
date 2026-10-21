@@ -94,6 +94,18 @@ function captionTemplate(text, example, slot) {
   return hit.text.slice(0, hit.text.indexOf(token) + token.length).trim();
 }
 
+/**
+ * How many of the value's words a caption has. A product is rarely said the way a listing writes it: "S25 ultra
+ * 12GB256GB phone" was said for "Samsung Galaxy S25 Ultra 5G AI Smartphone (…, 12GB RAM, 256GB Storage)" (Amazon, live),
+ * which shares "S25" and "Ultra" — enough to know which row the demo's "Add to cart" belonged to.
+ */
+const MIN_SHARED_WORDS = 2;
+const wordsOf = (s) => amp(String(s).toLowerCase()).split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
+function sharedWords(caption, value) {
+  const have = new Set(wordsOf(caption));
+  return [...new Set(wordsOf(value))].filter((w) => have.has(w)).length;
+}
+
 /** More words than this around the value, and a row caption describes one product, not the kind of row. */
 const NEAR_EXTRA_WORDS = 2;
 
@@ -221,7 +233,8 @@ export function generalise({ command, intentKey, slots, steps: recorded }) {
     // that merely happens to mention the item cannot start failing its step.
     if (step.type === 'tap' && context.length && !step.slotRef && (candidates > 1 || !identifies(sel))) {
       for (const [slot, example] of slotEntries) {
-        const near = find(slot, example, (f) => context.map((c) => tokenise(c, f, slot)).filter(Boolean).sort((a, b) => a.length - b.length)[0]);
+        const near = find(slot, example, (f) => context.map((c) => tokenise(c, f, slot)).filter(Boolean).sort((a, b) => a.length - b.length)[0])
+          ?? (context.some((c) => sharedWords(c, example) >= MIN_SHARED_WORDS) ? `{{${slot}}}` : null);
         if (near) { sel.near = anchorOf(near, slot); step.slotRef ??= slot; break; }
       }
     }

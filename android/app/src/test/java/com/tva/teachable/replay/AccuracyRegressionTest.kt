@@ -403,4 +403,19 @@ class AccuracyRegressionTest {
         assertTrue(r.stoppedByUser)
         assertEquals("you asked me to stop", r.steps.last().error)
     }
+
+    @Test fun `Amazon - Add to cart in the row sharing most of the spoken product words in any order - a tie asks`() {
+        val ultra = "Samsung Galaxy S25 Ultra 5G AI Smartphone (Titanium Silverblue, 12GB RAM, 256GB Storage)"
+        val plain = "Samsung Galaxy S25 5G AI Smartphone (Navy, 8GB RAM, 128GB Storage)"
+        val s24 = "Samsung Galaxy S24 Ultra 5G AI Smartphone (Titanium Gray, 12GB RAM, 256GB Storage)"
+        fun shop(vararg titles: String) = tree(row(0), row(1), *titles.flatMap { t ->
+            listOf(row(2, click = true), row(3, text = t), row(3, text = "Add to cart", click = true))
+        }.toTypedArray())
+        fun added(nodes: List<UiNode>, item: String) =
+            SelectorMatcher.target(nodes, Selector(text = "Add to cart", near = item), item, true)?.let { nodes[it.index - 1].text }
+        for (order in listOf(listOf(plain, s24, ultra), listOf(ultra, plain, s24), listOf(s24, ultra, plain)))
+            assertEquals(order.toString(), ultra, added(shop(*order.toTypedArray()), "S25 ultra 12GB256GB phone"))
+        // Two different listings sharing the same number of words: no guess.
+        assertNull(added(shop(plain, "Samsung Galaxy S25 Edge 5G AI Smartphone (Silver, 12GB RAM, 256GB Storage)"), "S25 12GB 256GB"))
+    }
 }

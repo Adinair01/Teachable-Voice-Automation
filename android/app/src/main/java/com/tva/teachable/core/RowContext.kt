@@ -70,8 +70,27 @@ object RowContext {
         for (f in listOf(fallback.orEmpty(), word.takeIf { norm(it).length >= 4 }.orEmpty()).filter { norm(it).isNotEmpty() }.distinct()) {
             closestRow(raw, f)?.let { return it.getOrNull() }
         }
-        return null
+        return mostShared(raw, fallback.orEmpty())
     }
+
+    /**
+     * Last resort: the row whose caption has the most of the value's words, at least [MIN_SHARED]. A product is rarely
+     * said the way a listing writes it ("S25 ultra 12GB256GB phone" for "Samsung Galaxy S25 Ultra 5G AI Smartphone (…,
+     * 12GB RAM, 256GB Storage)", Amazon, live). A tie between two different captions is no answer: the caller asks.
+     */
+    private fun mostShared(rows: List<Pair<UiNode, List<String>>>, value: String): UiNode? {
+        val want = Captions.words(value).filter { it.length >= 2 }.toSet()
+        if (want.size < MIN_SHARED) return null
+        val scored = rows.mapNotNull { (node, texts) ->
+            texts.map { t -> t to Captions.words(t).toSet().intersect(want).size }.maxByOrNull { it.second }
+                ?.takeIf { it.second >= MIN_SHARED }?.let { (t, n) -> Triple(node, t, n) }
+        }
+        val best = scored.maxOfOrNull { it.third } ?: return null
+        val top = scored.filter { it.third == best }
+        return if (top.map { norm(it.second) }.distinct().size == 1) top.first().first else null
+    }
+
+    private const val MIN_SHARED = 2
 
     /**
      * Among rows that mention [needle], the one whose caption is closest to being exactly it (fewest extra words):

@@ -290,3 +290,17 @@ test('a row anchored on a long product title keeps only the item (Amazon, seen l
     steps: [{ type: 'launch', value: 'z' }, { type: 'tap', selector: { contentDesc: 'ADD' }, candidates: 6, context: ['Margherita Pizza', '₹114', 'ADD'] }] });
   assert.equal(g.steps[1].selector.near, '{{item}} Pizza');
 });
+
+test('a product said differently from its listing still anchors Add to cart to its row, by the words they share (Amazon, live)', () => {
+  const f = generalise({ command: 'Order S25 ultra 12GB256GB phone from Amazon', intentKey: 'order', slots: { item: 'S25 ultra 12GB256GB phone' },
+    steps: [{ type: 'launch', value: 'in.amazon.mShop.android.shopping' },
+      { type: 'type', selector: { resourceId: 'a:id/rs_search_src_text' }, value: 'S25 ultra 12GB256GB phone' },
+      { type: 'tap', selector: { text: 'Add to cart' }, candidates: 5,
+        context: ['Samsung Galaxy S25 Ultra 5G AI Smartphone (Titanium Silverblue, 12GB RAM, 256GB Storage)', '₹1,29,999', 'Add to cart'] }] });
+  assert.equal(f.steps[2].selector.near, '{{item}}');
+  // One shared word is not enough to claim the row.
+  const g = generalise({ command: 'Order a pixel phone', intentKey: 'order', slots: { item: 'pixel phone' },
+    steps: [{ type: 'launch', value: 'a' }, { type: 'type', selector: {}, value: 'pixel phone' },
+      { type: 'tap', selector: { text: 'Add to cart' }, candidates: 5, context: ['Samsung Galaxy S25 5G AI Smartphone phone case', 'Add to cart'] }] });
+  assert.equal(g.steps[2].selector.near ?? '', '');
+});
