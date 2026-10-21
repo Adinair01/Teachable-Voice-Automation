@@ -139,6 +139,27 @@ test('only a clear yes saves; an ambiguous or mixed reply saves nothing', () => 
   assert.equal(isYes(''), false);
 });
 
+test('yes/no must be the WHOLE reply: a new command that starts with "okay" or "sure" is never consent', () => {
+  // Before: "Okay, order a margherita" applied the flow edit and the order was dropped.
+  for (const t of ['Okay, order a margherita', 'sure, get me a farmhouse', 'yes order two pizzas', 'no order pizza instead']) {
+    assert.equal(isYes(t), false, t);
+    assert.equal(isNo(t), false, t);
+  }
+  assert.equal(isNo('thanks'), false);
+  assert.equal(isYes('Yes please.'), true);
+});
+
+test('a tap the user named that names THIS request\'s dish is refused, so the flow never learns the value as a literal', () => {
+  const steps = [{ type: 'launch', value: 'z' }, { type: 'tap', selector: { text: 'Ordered by 90+ customers' } }];
+  const c = [{ step: 1, kind: 'flow_defect', op: 'replace_selector', was: '"Ordered by 90+ customers"', now: 'tap "Margherita Pizza"',
+    selector: { text: 'Margherita Pizza', contentDesc: '', resourceId: '', className: '' } }];
+  const p = plan(steps, c, { item: 'Margherita pizza', restaurant: "Domino's" });
+  assert.equal(p.offer.length, 0);
+  assert.equal(p.refused[0].why, 'names the requested value');
+  // The same caption with no slot context is still learnable (nothing says it is a value).
+  assert.equal(plan(steps, c).offer.length, 1);
+});
+
 test('prices are stripped but digits that belong to a name are not', () => {
   assert.equal(stripPrice('Add item ₹1,149.50'), 'Add item');
   assert.equal(stripPrice('Pay Rs. 249 now'), 'Pay now');

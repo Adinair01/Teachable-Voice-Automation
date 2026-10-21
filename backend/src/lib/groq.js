@@ -9,6 +9,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FATAL = (status) => status === 401 || status === 403;
 const retryAfterMs = (res) => Math.min(10000, (Number(res.headers?.get?.('retry-after')) || 2) * 1000);
 
+// How long a rate-limited model is passed over: its own Retry-After, within sane bounds. A 429 on the GPT model sends
+// every later call straight to the next model (Qwen) until then, instead of paying a refused round trip each time.
+const COOL_MIN_MS = 2000;
+const COOL_MAX_MS = 60000;
+const coolUntil = new Map();
+/** For tests: forget every cooldown. */
+export const resetCooldowns = () => coolUntil.clear();
+/** Models resting after a 429 (until when), for logs and metrics. */
+export const cooling = (now = Date.now()) => [...coolUntil].filter(([, t]) => t > now).map(([model, until]) => ({ model, until }));
+
+/**
+ * The chain in the order to try it NOW: models that are free, in their configured order, then the ones still cooling
+ * down (soonest free first). A cooling model is still tried last rather than skipped, so a run of 429s can never leave
+ * the assistant with no model at all.
+ */
+function ordered(models, now = Date.now()) {
+  const free = models.filter((m) => !(coolUntil.get(m) > now));
+  const resting = models.filter((m) => coolUntil.get(m) > now).sort((a, b) => coolUntil.get(a) - coolUntil.get(b));
+  return [...free, ...resting];
+}
+
 /** Model output that parsed but cannot be trusted — malformed JSON, wrong shape, or a value the caller rejected. */
 class UnusableOutput extends Error {}
 
@@ -32,6 +53,7 @@ async function attempt({ model, system, user, schema, timeoutMs, fetchImpl, vali
   }
   if (!res.ok) {
     const err = new Error(`groq http ${res.status}`);
+    if (res.status === 429) coolUntil.set(model, Date.now() + Math.min(COOL_MAX_MS, Math.max(COOL_MIN_MS, retryAfterMs(res))));
     if (FATAL(res.status)) return { err, fatal: true, why: `http ${res.status}` };
     return { err, waitMs: retryAfterMs(res), why: `http ${res.status}` };
   }
@@ -59,28 +81,32 @@ async function attempt({ model, system, user, schema, timeoutMs, fetchImpl, vali
  *
  * Models are tried in order (config.GROQ_MODEL_CHAIN: gpt-oss -> qwen -> gpt-oss-120b). A model that is rate
  * limited, down, decommissioned, or that answers with something unusable hands the question to the next one
- * immediately — no waiting while another model is free. Only when the whole chain is exhausted do we wait out
- * the server's own Retry-After and run the chain once more.
+ * immediately — no waiting while another model is free. A rate-limited model is then passed over for its
+ * Retry-After window (see ordered()), so the next call goes straight to a free one. Waiting out Retry-After and
+ * re-running the chain happens only when a caller opts in with retries > 0; the voice session never does.
  */
 export async function groqJson({
-  system, user, schema, timeoutMs = 15000, fetchImpl = fetch,
-  models = config.GROQ_MODEL_CHAIN, validate, retries = 1,
+  system, user, schema, timeoutMs = 5000, fetchImpl = fetch,
+  models = config.GROQ_MODEL_CHAIN, validate, retries = 0,
 }) {
   if (!config.GROQ_API_KEY) throw new Error('GROQ_API_KEY not configured');
   let last;
   let rejected;
   let waitMs = 0;
-  for (const [i, model] of models.entries()) {
+  // 5 s per model (was 15 s): a person is waiting on a reply. Three models at 15 s each was up to 45 s of silence.
+  // retries = 0: a live session never sits out Retry-After; it answers from whichever model is free, or says so.
+  const chain = ordered(models);
+  for (const [i, model] of chain.entries()) {
     const r = await attempt({ model, system, user, schema, timeoutMs, fetchImpl, validate });
     if ('value' in r) {
-      if (i > 0) logger.info({ model, after: models.slice(0, i) }, 'groq answered on a fallback model');
+      if (i > 0) logger.info({ model, after: chain.slice(0, i) }, 'groq answered on a fallback model');
       return r.value;
     }
     last = r.err;
     rejected = r.rejected ?? rejected;
     waitMs = Math.max(waitMs, r.waitMs ?? 0);
     if (r.fatal) break;
-    const next = models[i + 1];
+    const next = chain[i + 1];
     logger.warn({ model, why: r.why, next: next ?? null }, next ? 'groq model failed, switching model' : 'groq model failed, chain exhausted');
   }
   if (retries > 0 && waitMs > 0) {

@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseSlots, withDefaults } from '../src/prompts/slots.js';
+import { normaliseSlots, withDefaults, wordsToNumber, quantityOf, replaySlots, askFor } from '../src/prompts/slots.js';
 
 test('quantity words become digits, address labels lose "my"/"the", empty slots are dropped', () => {
   assert.deepEqual(normaliseSlots({ item: 'Margherita', quantity: 'two' }), { item: 'Margherita', quantity: '2' });
   assert.deepEqual(normaliseSlots({ quantity: 3 }), { quantity: '3' });
   assert.deepEqual(normaliseSlots({ quantity: '2 pizzas' }), { quantity: '2' });
   assert.deepEqual(normaliseSlots({ address: 'my Work' }), { address: 'Work' });
-  assert.deepEqual(normaliseSlots({ quantity: 'some', address: '' }), {});
+  // An unreadable quantity is kept as said (it used to be dropped, so the app silently ordered one): it gets asked about.
+  assert.deepEqual(normaliseSlots({ quantity: 'some', address: '' }), { quantity: 'some' });
 });
 
 test('unmentioned slots fall back to the taught example, optional ones stay unset', () => {
@@ -34,4 +35,30 @@ test('a value that is only filler, or legitimately contains such a word, is hand
   assert.deepEqual(normaliseSlots({ a: 'please' }), { a: 'please' }); // nothing left to strip to: kept as-is
   assert.equal(normaliseSlots({ item: 'naan bread' }).item, 'naan bread'); // "naan" is not "na"
   assert.equal(normaliseSlots({ item: 'okay dokey pizza' }).item, 'dokey pizza');
+});
+
+test('quantity: counting words multiply, "a" is one only on its own, and the noun is ignored', () => {
+  // Before: "a couple" -> 3, "a pair" -> 3, "a dozen" -> 13, "a couple of" / "two pizzas" / "couple of" -> dropped.
+  const cases = { two: '2', 'a couple of': '2', 'a couple': '2', 3: '3', three: '3', 'a pair': '2', 'a dozen': '12',
+    'two pizzas': '2', 'couple of': '2', 'two dozen': '24', a: '1', an: '1', 'one': '1', 'twelve boxes': '12' };
+  for (const [said, want] of Object.entries(cases)) assert.equal(normaliseSlots({ quantity: said }).quantity, want, said);
+  assert.equal(quantityOf('a few'), null);
+  assert.equal(quantityOf('some'), null);
+});
+
+test('wordsToNumber still refuses anything that is not wholly a number', () => {
+  assert.equal(wordsToNumber('a pizza'), null);
+  assert.equal(wordsToNumber('Seven Cheese Pizza'), null);
+  assert.equal(wordsToNumber('two a'), null);
+  assert.equal(wordsToNumber('a hundred'), 100);
+});
+
+test('an unreadable quantity is ASKED about, never replaced by the app default of 1', () => {
+  const flowSlots = [{ name: 'item', example: 'Farmhouse pizza' }, { name: 'quantity', example: '1' }];
+  const r = replaySlots(normaliseSlots({ item: 'Farmhouse pizza', quantity: 'a few' }), flowSlots, ['quantity', 'address']);
+  assert.equal(r.ask?.name, 'quantity');
+  assert.equal(r.slots.quantity, undefined, 'the unreadable value is not sent to the phone');
+  assert.equal(askFor(r.ask), 'How many should I get? I heard "a few", but not a number.');
+  // A readable one goes straight through.
+  assert.equal(replaySlots(normaliseSlots({ item: 'x', quantity: 'a couple' }), flowSlots, ['quantity']).slots.quantity, '2');
 });

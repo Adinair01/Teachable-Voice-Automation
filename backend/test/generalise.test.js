@@ -15,7 +15,8 @@ const flow = generalise({ command: 'search burger', intentKey: 'search_google', 
 test('typed value and tapped text become slot tokens (case-insensitive)', () => {
   assert.equal(flow.steps[1].value, '{{query}}');
   assert.equal(flow.steps[1].slotRef, 'query');
-  assert.equal(flow.steps[2].selector.text, '{{query}} near me');
+  // A tapped caption is the NAME of the thing tapped, so it becomes the slot as a whole (see the {{restaurant}} test).
+  assert.equal(flow.steps[2].selector.text, '{{query}}');
 });
 test('credential fields are dropped, never stored', () => {
   assert.ok(!JSON.stringify(flow).includes('hunter2'));
@@ -35,7 +36,8 @@ test('slot-bound taps drop their recorded expectation', () => {
   const f = generalise({ command: 'open bluetooth settings', intentKey: 'open_settings', slots: { page: 'Bluetooth' },
     steps: [{ type: 'launch', value: 'com.android.settings' }, { type: 'tap', selector: { text: 'Bluetooth' }, expect: { package: 'com.oplus.wirelesssettings' } }] });
   assert.equal(f.steps[1].selector.text, '{{page}}');
-  assert.deepEqual(f.steps[1].expect, {});
+  // The demo's package expectation is dropped; what replaces it is "the page we opened names the page asked for".
+  assert.deepEqual(f.steps[1].expect, { textContains: '{{page}}' });
 });
 
 test('slot-bound taps drop the demonstrated element id, which would outrank the slot text on replay', () => {
@@ -77,7 +79,7 @@ test('ordering demo: loose slot matching, row-anchored ADD, implied quantity + a
   });
   const [, search, card, dish, add, , ...rest] = f.steps;
   assert.equal(search.value, '{{restaurant}}');
-  assert.equal(card.selector.text, '{{restaurant}} Pizza');
+  assert.equal(card.selector.text, '{{restaurant}}');
   assert.equal(dish.value, '{{item}}');
   assert.equal(add.selector.near, '{{item}}');
   assert.equal(add.slotRef, 'item');
@@ -107,7 +109,7 @@ test('a self-labelled tap (own caption carries the slot) is not also anchored to
     ],
   });
   const [, , card] = f.steps;
-  assert.equal(card.selector.text, "{{restaurant}} Pizza");
+  assert.equal(card.selector.text, '{{restaurant}}');
   assert.ok(!card.selector.near, 'own-caption slot must not also be templated into near');
   assert.equal(card.slotRef, 'restaurant');
 });
@@ -181,4 +183,70 @@ test('a slot-bound tap verifies that the screen it opened names the value asked 
   });
   assert.equal(f.steps[1].expect.textContains, '{{restaurant}}', 'stored as the bare token, not the demo wording');
   assert.equal(f.steps[2].expect.textContains ?? '', '');
+});
+
+// ---- Part 0: no value from the demonstration may survive into a replay as a literal or a fragment ----
+
+const typeStep = (spoken, typed, slot = 'item') => generalise({ command: `order ${spoken}`, intentKey: 'k', slots: { [slot]: spoken },
+  steps: [{ type: 'launch', value: 'p' }, { type: 'type', selector: { resourceId: 'x:id/edittext' }, value: typed }] });
+
+test('a typed value that only partly matches the spoken one becomes the WHOLE slot, never slot plus leftovers', () => {
+  // Before: "{{item}} pizza" (replays "Farmhouse pizza pizza"), "{{item}}s", and "farm{{item}}" ("farmMargherita").
+  assert.equal(typeStep('Margherita pizzas', 'Margherita pizza').steps[1].value, '{{item}}');
+  assert.equal(typeStep('Margherita pizza', 'Margherita pizzas').steps[1].value, '{{item}}');
+  assert.equal(typeStep('Farm house pizza', 'farmhouse').steps[1].value, '{{item}}');
+  // An exact occurrence inside a longer query keeps the query's own words: "pizza near me" is a template.
+  assert.equal(typeStep('pizza', 'pizza near me', 'query').steps[1].value, '{{query}} near me');
+});
+
+test('the longest-word fallback only takes whole words ("house" inside "farmhouse" is not the slot)', () => {
+  const f = generalise({ command: 'order farm house pizza', intentKey: 'k', slots: { item: 'Farm house pizza' },
+    steps: [{ type: 'launch', value: 'p' }, { type: 'tap', selector: { text: 'Lighthouse Cafe' } }] });
+  assert.equal(f.steps[1].selector.text, 'Lighthouse Cafe');
+  assert.equal(f.steps[1].slotRef, null);
+});
+
+test('a recogniser spelling ("Margarita") still templates the menu spelling ("Margherita"), never stored literally', () => {
+  const f = typeStep('Margarita pizza', 'Margherita');
+  assert.equal(f.steps[1].value, '{{item}}');
+  assert.ok(!JSON.stringify(f.steps).includes('Margherita'), 'no literal dish left in the flow');
+  // ...but two genuinely different short names are not merged.
+  assert.equal(typeStep('Veg Pizza', 'Egg').steps[1].value, 'Egg');
+});
+
+test('calculator: a number spoken as a word templates the digit key, and the slot is stored in its taught (digit) shape', () => {
+  // Before: num1="five" never matched the key "5", which stayed a literal, so every replay pressed 5 again.
+  const f = generalise({ command: 'calculate five plus two', intentKey: 'calculate', slots: { num1: 'five', num2: 'two' },
+    steps: [{ type: 'launch', value: 'calc' }, { type: 'tap', selector: { resourceId: 'c:id/digit_5', text: '5' } },
+      { type: 'tap', selector: { contentDesc: 'Add' } }, { type: 'tap', selector: { resourceId: 'c:id/digit_2', text: '2' } }] });
+  assert.equal(f.steps[1].selector.text, '{{num1}}');
+  assert.equal(f.steps[3].selector.text, '{{num2}}');
+  assert.deepEqual(f.slots, [{ name: 'num1', example: '5' }, { name: 'num2', example: '2' }]);
+  assert.deepEqual(f.missing, []);
+});
+
+test('a slot the command named but the demo never used is reported missing, so the flow is not saved with a literal', () => {
+  // The exact shape of "taught Margherita, said Farmhouse, got Margherita": restaurant found, dish typed in a form
+  // nothing could match, the flow saved anyway, and its typed step replayed the demo's dish forever.
+  const f = generalise({ command: "order a paneer tikka from Domino's", intentKey: 'k', slots: { item: 'paneer tikka', restaurant: "Domino's" },
+    steps: [{ type: 'launch', value: 'z' }, { type: 'type', selector: { resourceId: 'z:id/edittext' }, value: 'dominos' },
+      { type: 'type', selector: { resourceId: 'z:id/edittext' }, value: 'chicken wings' }] });
+  assert.deepEqual(f.missing.map((s) => s.name), ['item']);
+  // Quantity and address are applied by added steps, never by the demo, so they are never "missing".
+  const g = generalise({ command: 'order two dominos', intentKey: 'k', slots: { restaurant: 'dominos', quantity: '2', address: 'work' },
+    steps: [{ type: 'launch', value: 'z' }, { type: 'type', selector: {}, value: 'dominos' }] });
+  assert.deepEqual(g.missing, []);
+});
+
+test('restaurant suggestion: learned as {{restaurant}} with a landing check, so another restaurant resolves to a real caption', () => {
+  const f = generalise({ command: "order a margherita from Domino's", intentKey: 'k', slots: { item: 'margherita', restaurant: "Domino's" },
+    steps: [{ type: 'launch', value: 'z' }, { type: 'tap', selector: { text: "Domino's Pizza", className: 'android.view.View' }, candidates: 3 }] });
+  assert.equal(f.steps[1].selector.text, '{{restaurant}}');
+  assert.deepEqual(f.steps[1].expect, { textContains: '{{restaurant}}' });
+});
+
+test('a caption with the value INSIDE the control\'s own wording keeps that wording: "Search in {{restaurant}}"', () => {
+  const f = generalise({ command: "order from Domino's", intentKey: 'k', slots: { restaurant: "Domino's" },
+    steps: [{ type: 'launch', value: 'z' }, { type: 'tap', selector: { contentDesc: "Search in Domino's Pizza" }, candidates: 1 }] });
+  assert.equal(f.steps[1].selector.contentDesc, 'Search in {{restaurant}}');
 });

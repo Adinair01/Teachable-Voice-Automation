@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 process.env.MONGO_URL = 'x';
 process.env.GROQ_API_KEY = 'test';
 const { pickElement, pickElementInput } = await import('../src/prompts/pickElement.js');
-const { groqJson } = await import('../src/lib/groq.js');
+const { groqJson, resetCooldowns } = await import('../src/lib/groq.js');
+test.beforeEach(() => resetCooldowns());
 const { z } = await import('zod');
 
 const fakeFetch = (content) => async () => ({ ok: true, json: async () => ({ choices: [{ message: { content } }] }) });
@@ -33,7 +34,7 @@ test('matchFlow prompt treats slot-only differences as the same task', async () 
   assert.equal(bad.flowId, null); // ids the model invents are rejected
 });
 
-test('a throttled groq call is retried once before failing', async () => {
+test('a throttled groq call is answered by the next model in the chain', async () => {
   const calls = [];
   const fetchImpl = async () => {
     calls.push(1);
@@ -43,4 +44,13 @@ test('a throttled groq call is retried once before failing', async () => {
   const out = await groqJson({ system: 's', user: 'u', schema: z.object({ index: z.number() }), fetchImpl });
   assert.equal(calls.length, 2);
   assert.equal(out.index, 1);
+});
+
+test('only the item slot can be clarified: a search term is never answered with "Which pizza?"', async () => {
+  const { matchFlow } = await import('../src/prompts/matchFlow.js');
+  const search = { _id: 'f1', description: 'search google for burger', slots: [{ name: 'query', example: 'burger' }] };
+  const order = { _id: 'f2', description: 'order a margherita', slots: [{ name: 'item', example: 'margherita' }] };
+  const reply = (flowId, slot) => fakeFetch(JSON.stringify({ flowId, slots: {}, intentKey: 'k', clarify: { slot, question: 'Which pizza?' } }));
+  assert.equal((await matchFlow('look up pizza on Google', [search, order], { fetchImpl: reply('f1', 'query') })).clarify, null);
+  assert.equal((await matchFlow('order pizza', [search, order], { fetchImpl: reply('f2', 'item') })).clarify.question, 'Which pizza?');
 });

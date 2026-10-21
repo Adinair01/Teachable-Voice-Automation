@@ -52,5 +52,8 @@ export async function matchFlow(utterance, flows, deps = {}) {
   });
   const flowId = out.flowId && ids.has(out.flowId) ? out.flowId : null;
   const slotNames = new Set(flows.find((f) => String(f._id) === flowId)?.slots?.map((s) => s.name));
-  return { ...out, flowId, clarify: flowId && out.clarify && slotNames.has(out.clarify.slot) ? out.clarify : null };
+  // "Which one?" is about WHAT to order, so only the reserved item slot may be clarified (SLOT_RULES). Seen live: the
+  // model asked "Which pizza?" for "look up pizza on Google", whose search term is the whole point, not a category.
+  const clarify = flowId && out.clarify?.slot === 'item' && slotNames.has('item') ? out.clarify : null;
+  return { ...out, flowId, clarify };
 }

@@ -69,17 +69,21 @@ const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const fromFile = process.argv[process.argv.indexOf('--flows') + 1];
 const useFile = process.argv.includes('--flows');
 if (!useFile) await mongoose.connect(config.MONGO_URL);
+// A mongosh dump writes ids as {"$oid": "..."}: left like that, EVERY flow's id stringifies to "[object Object]", the
+// matcher is shown several flows with one id, and any match scores as correct. Flatten them to their hex string.
 const flows = useFile
-  ? JSON.parse(readFileSync(fromFile, 'utf8'))
+  ? JSON.parse(readFileSync(fromFile, 'utf8')).map((f) => ({ ...f, _id: f._id?.$oid ?? f._id }))
   : await Flow.find().sort({ createdAt: -1 }).limit(100).lean();
 if (!flows.length) { console.error('no flows taught yet — teach something first'); process.exit(1); }
+if (new Set(flows.map((f) => String(f._id))).size !== flows.length) { console.error('flow ids are not distinct; the eval would be meaningless'); process.exit(1); }
 
 const results = [];
 for (const c of CASES) {
   const want = c.expect === null ? null : flows.find((f) => f.description.toLowerCase().includes(c.expect.toLowerCase()));
   if (c.expect !== null && !want) { results.push({ ...c, skipped: 'no such flow taught' }); continue; }
   await new Promise((r) => setTimeout(r, 1500)); // stay under the Groq free-tier rate limit (TPM)
-  const m = await matchFlow(c.utterance, flows);
+  // A batch with nobody waiting may sit out Retry-After (the live session never does: groqJson defaults to retries 0).
+  const m = await matchFlow(c.utterance, flows, { retries: 2 });
   // session.js normalises before replay, so the eval scores the slots the flow will ACTUALLY be run with.
   m.slots = normaliseSlots(m.slots);
   const got = m.flowId ? flows.find((f) => String(f._id) === m.flowId) : null;

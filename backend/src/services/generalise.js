@@ -1,8 +1,13 @@
 import { isSensitiveStep, looksLikeCredentialField } from './sensitive.js';
+import { wordsToNumber } from '../prompts/slots.js';
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** "Corn & Cheese" and "corn and cheese" must compare equal; mirrors RowContext.norm on the Android side. */
 const amp = (s) => s.replace(/&/g, ' and ');
+const norm = (s) => amp(String(s).toLowerCase()).replace(/[^a-z0-9]/g, '');
+// Only whole words of the text may be taken for a slot's longest word: "house" inside "farmhouse" is not the slot.
+const EDGE_L = '(?<![a-z0-9])';
+const EDGE_R = '(?![a-z0-9])';
 
 /**
  * Case- and punctuation-insensitive pattern for a spoken slot value: "Domino's" matches a typed "dominos" and
@@ -14,24 +19,88 @@ function slotPatterns(example) {
   const loose = (s) => amp(s).replace(/[^a-z0-9]/gi, '').split('').map(esc).join('[^a-z0-9]?');
   const words = example.split(/\s+/).filter((w) => w.replace(/[^a-z0-9]/gi, '').length >= 4).sort((a, b) => b.length - a.length);
   // Only the single longest word: the distinctive part ("Margherita"), never a generic one ("pizza" is in "Domino's Pizza").
-  return [example, ...(words.length > 1 ? words.slice(0, 1) : [])].filter((s) => loose(s)).map((s) => new RegExp(loose(s), 'i'));
+  // An exact occurrence must sit on word boundaries: "Margherita pizza" inside "Margherita pizzas" is a near miss
+  // ('partial'), and templating it in place would leave the demo's "s" behind ("{{item}}s").
+  const out = loose(example) ? [
+    { re: new RegExp(EDGE_L + loose(example) + EDGE_R, 'i'), how: 'full' },
+    { re: new RegExp(loose(example), 'i'), how: 'partial' },
+  ] : [];
+  if (words.length > 1 && loose(words[0])) out.push({ re: new RegExp(EDGE_L + loose(words[0]) + EDGE_R, 'i'), how: 'word' });
+  return out;
 }
 
-/** Replace the first occurrence of the slot value in `text` with {{slot}}. Returns null if absent. */
-function tokenise(text, example, slot) {
+/** Edit distance, for a recogniser's spelling of a dish ("Margarita") against the menu's ("Margherita"). */
+function distance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  }
+  return d[a.length][b.length];
+}
+
+/** Two long words that differ by a letter or two are the same name spelled two ways. Short words never are. */
+const sameName = (a, b) => a.length >= 6 && b.length >= 6 && distance(a, b) <= 2;
+
+/**
+ * Where the slot value shows up in `text`: { text, how } with the occurrence replaced by {{slot}}, or null.
+ * how = full (the whole value, on word boundaries), partial (the value inside a longer word), word (its longest word),
+ * prefix (typed the first letters), fuzzy (spelled differently).
+ * Only 'full' leaves the surrounding words in place; the caller decides what the weaker kinds mean for its step.
+ */
+function locate(text, example, slot) {
   if (!text || !example) return null;
-  const re = slotPatterns(example).find((r) => r.test(text));
-  if (re) return text.replace(re, `{{${slot}}}`);
+  for (const { re, how } of slotPatterns(example)) if (re.test(text)) return { text: text.replace(re, `{{${slot}}}`), how };
   // Partial typing: the user typed the first few letters of the value into a search box, then tapped a suggestion
   // ("mar" -> Margherita, "dom" -> Domino's). If the whole typed text is a >=3-char prefix of the value (or one of its
   // words), it IS that slot — swap the entire value for {{slot}} so replay types the FULL value the command asked for.
-  const norm = (s) => amp(s.toLowerCase()).replace(/[^a-z0-9]/g, '');
   const t = norm(text);
   if (t.length >= 3) {
     const candidates = [example, ...example.split(/\s+/)].map(norm).filter(Boolean);
-    if (candidates.some((c) => c.length > t.length && c.startsWith(t))) return `{{${slot}}}`;
+    if (candidates.some((c) => c.length > t.length && c.startsWith(t))) return { text: `{{${slot}}}`, how: 'prefix' };
   }
+  const said = example.split(/\s+/).map(norm).filter(Boolean);
+  const shown = String(text).split(/\s+/).map(norm).filter(Boolean);
+  if (sameName(t, norm(example)) || shown.some((w) => said.some((x) => sameName(w, x)))) return { text: `{{${slot}}}`, how: 'fuzzy' };
   return null;
+}
+
+/**
+ * Replace the slot value in `text` with {{slot}}. Returns null if absent. A text that only PARTLY matched the value
+ * becomes {{slot}} as a whole, so no fragment of the demonstrated value can survive into a replay: "farmhouse" typed
+ * for a spoken "farm house pizza" used to be stored as "farm{{item}}", which types "farmMargherita" for a Margherita.
+ * [whole]: a typed value is one search query, so anything but an exact occurrence of the value is the value itself.
+ */
+function tokenise(text, example, slot, { whole = false } = {}) {
+  const hit = locate(text, example, slot);
+  if (!hit) return null;
+  return hit.how === 'full' || (hit.how === 'word' && !whole) ? hit.text : `{{${slot}}}`; // partial/prefix/fuzzy: the whole text
+}
+
+/** Does `text` name the value (in any of its spoken forms)? For callers that must not learn a value as a literal. */
+export const mentions = (text, value) => !!value && forms(String(value)).some((f) => locate(String(text ?? ''), f, 'x'));
+
+/**
+ * A tapped caption with the slot in it, for replay to find by "contains, fewest other words". Words BEFORE the value
+ * are the control's own wording and stay ("Search in {{restaurant}}"); words AFTER it are the rest of that one
+ * thing's name and go ("Domino's Pizza" -> "{{restaurant}}", which otherwise resolved to "Pizza Hut Pizza"). A
+ * weaker match (inside a word, a prefix, a respelling) cannot be cut cleanly, so the caption becomes the slot.
+ */
+function captionTemplate(text, example, slot) {
+  const hit = locate(text, example, slot);
+  if (!hit) return null;
+  const token = `{{${slot}}}`;
+  if (hit.how !== 'full' && hit.how !== 'word') return token;
+  return hit.text.slice(0, hit.text.indexOf(token) + token.length).trim();
+}
+
+/**
+ * The forms a spoken value can take in a demonstration: as said, and as digits when it is a number ("five" was spoken,
+ * the key pressed was "5"). Which form a model writes depends on which model answered, so both are looked for.
+ */
+function forms(example) {
+  const n = /^\d+$/.test(String(example).trim()) ? null : wordsToNumber(example);
+  return n != null && Number.isInteger(n) ? [example, String(n)] : [example];
 }
 
 /**
@@ -58,6 +127,13 @@ export const IMPLIED_SLOTS = [{ name: 'quantity', example: '1' }, { name: 'addre
  */
 export function generalise({ command, intentKey, slots, steps }) {
   const slotEntries = Object.entries(slots ?? {}).filter(([, v]) => v);
+  // The form each slot was actually demonstrated in ("5" for a spoken "five"): stored as the example, because replay
+  // puts new values into the TAUGHT shape (fitToTaught) and a word-shaped example would leave "seven" unconverted.
+  const shown = {};
+  const find = (slot, example, fn) => {
+    for (const f of forms(example)) { const v = fn(f); if (v) { shown[slot] ??= f; return v; } }
+    return null;
+  };
   const out = [];
   for (const raw of steps) {
     const sel = { resourceId: '', text: '', contentDesc: '', className: '', ...(raw.selector ?? {}) };
@@ -66,16 +142,20 @@ export function generalise({ command, intentKey, slots, steps }) {
     const step = { ...rest, selector: sel, slotRef: null, value: raw.value ?? '', sensitive: false, expect: raw.expect ?? {} };
     for (const [slot, example] of slotEntries) {
       if (step.type === 'type') {
-        const v = tokenise(step.value, example, slot);
+        const v = find(slot, example, (f) => tokenise(step.value, f, slot, { whole: true }));
         if (v) { step.value = v; step.slotRef = slot; }
       } else if (step.type === 'tap') {
         // Tokenise BOTH fields: a leftover literal in the other one would win on replay if the first match misses.
-        const text = tokenise(sel.text, example, slot);
-        const desc = tokenise(sel.contentDesc, example, slot);
+        // See captionTemplate: "{{restaurant}} Pizza" resolved to "Pizza Hut Pizza", which exists nowhere. Replay picks
+        // the control whose caption contains the resolved text with the fewest other words ("Pizza Hut" over
+        // "Pizza Hut Express"; "Search in Domino's Pizza" for "Search in {{restaurant}}").
+        const text = find(slot, example, (f) => captionTemplate(sel.text, f, slot));
+        const desc = find(slot, example, (f) => captionTemplate(sel.contentDesc, f, slot));
         if (text || desc) {
           if (text) sel.text = text;
           if (desc) sel.contentDesc = desc;
           step.slotRef = slot;
+          step.ownCaption = true;
         }
       }
     }
@@ -90,7 +170,7 @@ export function generalise({ command, intentKey, slots, steps }) {
     // that merely happens to mention the item cannot start failing its step.
     if (step.type === 'tap' && context.length && !step.slotRef && (candidates > 1 || !identifies(sel))) {
       for (const [slot, example] of slotEntries) {
-        const near = context.map((c) => tokenise(c, example, slot)).filter(Boolean).sort((a, b) => a.length - b.length)[0];
+        const near = find(slot, example, (f) => context.map((c) => tokenise(c, f, slot)).filter(Boolean).sort((a, b) => a.length - b.length)[0]);
         if (near) { sel.near = near; step.slotRef ??= slot; break; }
       }
     }
@@ -102,19 +182,28 @@ export function generalise({ command, intentKey, slots, steps }) {
       // ...but if that screen NAMED the slot value in the demo, replay can check it named the new one too: proof the
       // tap opened the restaurant or dish actually asked for. Stored as the bare token, never with the demo's own
       // wording around it, so it resolves cleanly for any value.
-      const example = slots?.[step.slotRef];
-      if (example && landedOn.some((c) => tokenise(c, example, step.slotRef))) {
-        step.expect = { textContains: `{{${step.slotRef}}}` };
-      }
+      // A tap whose own caption was the value is checked even when no following screen was recorded (Compose pages
+      // raise no window change): the page it opens names what was tapped, so "did we land on Pizza Hut?" is answerable.
+      // A recorded screen that did NOT name the value means this tap's page doesn't, so nothing is checked then.
+      const example = shown[step.slotRef] ?? slots?.[step.slotRef];
+      const named = example && landedOn.some((c) => tokenise(c, example, step.slotRef));
+      if (named || (step.ownCaption && !landedOn.length)) step.expect = { textContains: `{{${step.slotRef}}}` };
     }
+    delete step.ownCaption;
     step.sensitive = isSensitiveStep(step);
     out.push(step);
   }
   const appPackage = out.find((s) => s.type === 'launch')?.value ?? 'unknown';
-  const flowSlots = slotEntries.map(([name, example]) => ({ name, example }));
+  const flowSlots = slotEntries.map(([name, example]) => ({ name, example: shown[name] ?? example }));
   const slotsFound = out.some((s) => s.slotRef); // judged on the demo alone, before the implied steps are added
+  // A value the command named but the demonstration never used cannot vary on replay: its step keeps the demo's
+  // literal, and every later run would quietly do the TAUGHT one again ("order a Farmhouse" -> Margherita). Quantity and
+  // address are exempt: they are applied by steps added below, not by anything the user did.
+  const used = new Set(out.flatMap((s) => [s.slotRef, ...[s.value, s.selector?.text, s.selector?.contentDesc, s.selector?.near]
+    .flatMap((v) => [...String(v ?? '').matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]))]));
+  const missing = flowSlots.filter((s) => !used.has(s.name) && !IMPLIED_SLOTS.some((x) => x.name === s.name));
   if (ORDERING.test(command)) addOrderingSteps(out, flowSlots);
-  return { intentKey, description: command, appPackage, slots: flowSlots, steps: out, slotsFound };
+  return { intentKey, description: command, appPackage, slots: flowSlots, steps: out, slotsFound, missing };
 }
 
 /** Quantity + address adjustments go just before the first sensitive step (checkout), else at the end (the cart). */

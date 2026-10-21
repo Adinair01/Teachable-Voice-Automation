@@ -5,7 +5,8 @@ process.env.MONGO_URL = 'x';
 process.env.GROQ_API_KEY = 'test';
 process.env.GROQ_MODEL = 'model-a';
 process.env.GROQ_FALLBACK_MODELS = 'model-b,model-c';
-const { groqJson } = await import('../src/lib/groq.js');
+const { groqJson, resetCooldowns, cooling } = await import('../src/lib/groq.js');
+test.beforeEach(() => resetCooldowns()); // a 429 in one test must not reorder the chain in the next
 const { modelChain } = await import('../src/lib/config.js');
 const { z } = await import('zod');
 
@@ -75,12 +76,12 @@ test('a bad API key stops the chain immediately (same answer from every model)',
   assert.deepEqual(models, ['model-a']);
 });
 
-test('when every model is throttled the chain is retried once after Retry-After', async () => {
+test('a caller that opts in (retries: 1) gets the chain once more after Retry-After', async () => {
   const { models, fetchImpl } = script(
     fail(429), fail(429), fail(429),
     fail(429), fail(429), ok('{"index":4}'),
   );
-  const out = await groqJson({ system: 's', user: 'u', schema, fetchImpl });
+  const out = await groqJson({ system: 's', user: 'u', schema, fetchImpl, retries: 1 });
   assert.equal(out.index, 4);
   assert.equal(models.length, 6, 'one full second pass over the chain, then stop');
 });
@@ -97,4 +98,47 @@ test('when every model invents, the last answer is handed back for the caller to
   const out = await groqJson({ system: 's', user: 'u', schema, fetchImpl, validate: () => false });
   assert.equal(out.index, 97);
   assert.equal(models.length, 3);
+});
+
+test('by default an all-throttled chain fails fast: the session never sits out Retry-After', async () => {
+  const { models, fetchImpl } = script(fail(429, '30'), fail(429, '30'), fail(429, '30'));
+  const started = Date.now();
+  await assert.rejects(groqJson({ system: 's', user: 'u', schema, fetchImpl }));
+  assert.equal(models.length, 3, 'one pass, no second round');
+  assert.ok(Date.now() - started < 1000);
+});
+
+test('after GPT is rate limited, the NEXT call goes straight to Qwen until its Retry-After is over', async () => {
+  const first = script(fail(429, '20'), ok('{"index":1}'));
+  await groqJson({ system: 's', user: 'u', schema, fetchImpl: first.fetchImpl });
+  assert.deepEqual(first.models, ['model-a', 'model-b']);
+  assert.deepEqual(cooling().map((c) => c.model), ['model-a']);
+  const second = script(ok('{"index":2}'));
+  const out = await groqJson({ system: 's', user: 'u', schema, fetchImpl: second.fetchImpl });
+  assert.equal(out.index, 2);
+  assert.deepEqual(second.models, ['model-b'], 'the throttled model is not asked first again');
+});
+
+test('a cooling model is still tried LAST, so a run of 429s never leaves no model at all', async () => {
+  const warm = script(fail(429, '20'), fail(429, '20'), ok('{"index":0}'));
+  await groqJson({ system: 's', user: 'u', schema, fetchImpl: warm.fetchImpl });
+  const { models, fetchImpl } = script(fail(429), ok('{"index":5}'));
+  const out = await groqJson({ system: 's', user: 'u', schema, fetchImpl });
+  assert.equal(out.index, 5);
+  assert.deepEqual(models, ['model-c', 'model-a'], 'free model first, then the soonest-free cooling one');
+});
+
+test('a model that hangs is abandoned after 5 s (was 15 s), and the next one answers', async () => {
+  const models = [];
+  const fetchImpl = (_u, opts) => {
+    models.push(JSON.parse(opts.body).model);
+    if (models.length === 1) return new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(opts.signal.reason)));
+    return Promise.resolve(ok('{"index":1}'));
+  };
+  const started = Date.now();
+  const out = await groqJson({ system: 's', user: 'u', schema, fetchImpl });
+  const took = Date.now() - started;
+  assert.equal(out.index, 1);
+  assert.deepEqual(models, ['model-a', 'model-b']);
+  assert.ok(took >= 4900 && took < 7000, `gave up after ${took} ms`);
 });

@@ -1,0 +1,517 @@
+{
+  "calculator": {
+    "flow": {
+      "intentKey": "calculate",
+      "description": "Calculate five plus two through calculator",
+      "appPackage": "com.coloros.calculator",
+      "slots": [
+        {
+          "name": "num1",
+          "example": "5"
+        },
+        {
+          "name": "num2",
+          "example": "2"
+        }
+      ],
+      "steps": [
+        {
+          "type": "launch",
+          "value": "com.coloros.calculator",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "",
+            "className": ""
+          },
+          "slotRef": null,
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "com.coloros.calculator:id/clr",
+            "text": "",
+            "contentDesc": "Clear",
+            "className": "android.widget.Button"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "{{num1}}",
+            "contentDesc": "",
+            "className": "android.widget.Button"
+          },
+          "slotRef": "num1",
+          "value": "",
+          "sensitive": false,
+          "expect": {
+            "textContains": "{{num1}}"
+          }
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "com.coloros.calculator:id/op_add",
+            "text": "",
+            "contentDesc": "Add",
+            "className": "android.widget.Button"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "{{num2}}",
+            "contentDesc": "",
+            "className": "android.widget.Button"
+          },
+          "slotRef": "num2",
+          "value": "",
+          "sensitive": false,
+          "expect": {
+            "textContains": "{{num2}}"
+          }
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "com.coloros.calculator:id/eq",
+            "text": "",
+            "contentDesc": "Equals",
+            "className": "android.widget.Button"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        }
+      ]
+    },
+    "replays": [
+      {
+        "said": "calculate 7 + 9",
+        "slots": {
+          "num1": "7",
+          "num2": "9"
+        },
+        "keys": [
+          "7",
+          "9"
+        ]
+      },
+      {
+        "said": "what is seven plus nine",
+        "slots": {
+          "num1": "7",
+          "num2": "9"
+        },
+        "keys": [
+          "7",
+          "9"
+        ]
+      },
+      {
+        "said": "calculate 100 + 1",
+        "slots": {
+          "num1": "100",
+          "num2": "1"
+        },
+        "keys": [
+          "100",
+          "1"
+        ]
+      },
+      {
+        "said": "calculate 5 + 2",
+        "slots": {
+          "num1": "5",
+          "num2": "2"
+        },
+        "keys": [
+          "5",
+          "2"
+        ]
+      }
+    ]
+  },
+  "margheritaTaught": {
+    "flow": {
+      "intentKey": "order_food",
+      "description": "Order a Margherita pizza from Domino's on Zomato",
+      "appPackage": "com.application.zomato",
+      "slots": [
+        {
+          "name": "item",
+          "example": "Margherita pizza"
+        },
+        {
+          "name": "restaurant",
+          "example": "Domino's"
+        },
+        {
+          "name": "quantity",
+          "example": "1"
+        },
+        {
+          "name": "address",
+          "example": "home"
+        }
+      ],
+      "steps": [
+        {
+          "type": "launch",
+          "value": "com.application.zomato",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "",
+            "className": ""
+          },
+          "slotRef": null,
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "com.application.zomato:id/search_bar_view_flipper",
+            "text": "Search",
+            "contentDesc": "",
+            "className": "android.widget.ViewFlipper"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "type",
+          "selector": {
+            "resourceId": "com.application.zomato:id/edittext",
+            "text": "",
+            "contentDesc": "",
+            "className": "android.widget.EditText"
+          },
+          "value": "{{restaurant}}",
+          "slotRef": "restaurant",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "{{restaurant}}",
+            "contentDesc": "",
+            "className": "android.view.View"
+          },
+          "slotRef": "restaurant",
+          "value": "",
+          "sensitive": false,
+          "expect": {
+            "textContains": "{{restaurant}}"
+          }
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "Search in {{restaurant}}",
+            "className": "android.view.ViewGroup"
+          },
+          "slotRef": "restaurant",
+          "value": "",
+          "sensitive": false,
+          "expect": {
+            "textContains": "{{restaurant}}"
+          }
+        },
+        {
+          "type": "type",
+          "selector": {
+            "resourceId": "com.application.zomato:id/edittext",
+            "text": "",
+            "contentDesc": "",
+            "className": "android.widget.EditText"
+          },
+          "value": "{{item}}",
+          "slotRef": "item",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "ADD",
+            "className": "android.view.View",
+            "near": "{{item}}"
+          },
+          "slotRef": "item",
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "com.application.zomato:id/button",
+            "text": "Add item",
+            "contentDesc": "",
+            "className": "android.widget.Button"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "Continue",
+            "className": "android.view.View"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "set_quantity",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "",
+            "className": "",
+            "near": "{{item}}"
+          },
+          "slotRef": "quantity",
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "choose_address",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "",
+            "className": "",
+            "near": ""
+          },
+          "slotRef": "address",
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        }
+      ]
+    },
+    "replay": {
+      "said": "order a Farmhouse pizza from Domino's on Zomato",
+      "slots": {
+        "item": "Farmhouse pizza",
+        "restaurant": "Domino's"
+      }
+    }
+  },
+  "farmhouseTaught": {
+    "flow": {
+      "intentKey": "order_food",
+      "description": "Order a Farmhouse pizza from Domino's on Zomato",
+      "appPackage": "com.application.zomato",
+      "slots": [
+        {
+          "name": "item",
+          "example": "Farmhouse pizza"
+        },
+        {
+          "name": "restaurant",
+          "example": "Domino's"
+        },
+        {
+          "name": "quantity",
+          "example": "1"
+        },
+        {
+          "name": "address",
+          "example": "home"
+        }
+      ],
+      "steps": [
+        {
+          "type": "launch",
+          "value": "com.application.zomato",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "",
+            "className": ""
+          },
+          "slotRef": null,
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "com.application.zomato:id/search_bar_view_flipper",
+            "text": "Search",
+            "contentDesc": "",
+            "className": "android.widget.ViewFlipper"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "type",
+          "selector": {
+            "resourceId": "com.application.zomato:id/edittext",
+            "text": "",
+            "contentDesc": "",
+            "className": "android.widget.EditText"
+          },
+          "value": "{{restaurant}}",
+          "slotRef": "restaurant",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "{{restaurant}}",
+            "contentDesc": "",
+            "className": "android.view.View"
+          },
+          "slotRef": "restaurant",
+          "value": "",
+          "sensitive": false,
+          "expect": {
+            "textContains": "{{restaurant}}"
+          }
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "Search in {{restaurant}}",
+            "className": "android.view.ViewGroup"
+          },
+          "slotRef": "restaurant",
+          "value": "",
+          "sensitive": false,
+          "expect": {
+            "textContains": "{{restaurant}}"
+          }
+        },
+        {
+          "type": "type",
+          "selector": {
+            "resourceId": "com.application.zomato:id/edittext",
+            "text": "",
+            "contentDesc": "",
+            "className": "android.widget.EditText"
+          },
+          "value": "{{item}}",
+          "slotRef": "item",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "ADD",
+            "className": "android.view.View",
+            "near": "{{item}}"
+          },
+          "slotRef": "item",
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "com.application.zomato:id/button",
+            "text": "Add item",
+            "contentDesc": "",
+            "className": "android.widget.Button"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "tap",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "Continue",
+            "className": "android.view.View"
+          },
+          "slotRef": null,
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "set_quantity",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "",
+            "className": "",
+            "near": "{{item}}"
+          },
+          "slotRef": "quantity",
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        },
+        {
+          "type": "choose_address",
+          "selector": {
+            "resourceId": "",
+            "text": "",
+            "contentDesc": "",
+            "className": "",
+            "near": ""
+          },
+          "slotRef": "address",
+          "value": "",
+          "sensitive": false,
+          "expect": {}
+        }
+      ]
+    },
+    "replay": {
+      "said": "order a Margherita pizza from Domino's on Zomato",
+      "slots": {
+        "item": "Margherita pizza",
+        "restaurant": "Domino's"
+      }
+    }
+  }
+}

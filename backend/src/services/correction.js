@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isSensitiveStep, looksLikeCredentialField } from './sensitive.js';
+import { mentions } from './generalise.js';
 
 /**
  * What the user's answers to "what should I do?" imply for a stored flow.
@@ -43,7 +44,10 @@ const canLearnFrom = (sel) => (sel.text || sel.contentDesc) !== '';
  * Re-checked here rather than trusted: the phone is a client, and a stale or malformed correction must not be able to
  * rewrite a flow into something unsafe.
  */
-export function plan(steps, corrections) {
+export function plan(steps, corrections, slots = {}) {
+  // A caption that names THIS request's dish or restaurant is a value, not a control: learning "tap Margherita Pizza"
+  // as a plain step would tap Margherita on every later run, whatever was asked for.
+  const values = Object.values(slots).filter((v) => v && String(v).trim().length >= 2);
   const offer = [];
   const refused = [];
   const seen = new Set();
@@ -65,6 +69,7 @@ export function plan(steps, corrections) {
     if (!canLearnFrom(sel)) { refused.push({ ...c, why: 'nothing to recognise it by' }); continue; }
     if (looksLikeCredentialField(`${sel.text} ${sel.contentDesc}`)) { refused.push({ ...c, why: 'credential field' }); continue; }
     if (isSensitiveStep(candidate)) { refused.push({ ...c, why: 'sensitive' }); continue; }
+    if (values.some((v) => mentions(`${sel.text} ${sel.contentDesc}`, v))) { refused.push({ ...c, why: 'names the requested value' }); continue; }
     if (c.op === 'replace_selector') {
       if (!at || at.type !== 'tap' || at.slotRef || at.selector?.near || at.sensitive) { refused.push({ ...c, why: 'not a plain step' }); continue; }
     } else if (c.step > steps.length) { refused.push({ ...c, why: 'out of range' }); continue; }
@@ -109,8 +114,14 @@ export function describe({ offer, refused, situational }) {
   return lines.join(' ');
 }
 
-const NO = /\b(no|nope|nah|don'?t|do not|never ?mind|cancel|leave it|keep it|not now|stop)\b/i;
-const YES = /\b(yes|yeah|yep|yup|sure|ok(ay)?|please do|do it|save( it)?|update( it)?|go ahead|remember( that| it)?)\b/i;
-export const isNo = (t = '') => NO.test(t);
-/** A yes that also contains a no ("yes... actually don't") is a no: nothing is saved on an ambiguous reply. */
-export const isYes = (t = '') => YES.test(t) && !NO.test(t);
+// The WHOLE reply must be a yes or a no. Matching a word anywhere made "Okay, order a margherita" a yes to rewriting
+// the flow, which saved the edit and dropped the order the user had just asked for.
+const tidy = (t = '') => t.toLowerCase().replace(/[^a-z' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+const YES_WORD = 'yes|yeah|yep|yup|sure|okay|ok|please do|do it|save it|save|update it|update|go ahead|remember it|remember that|please';
+const NO_WORD = "no thanks|no|nope|nah|don't|do not|dont|never mind|nevermind|cancel|leave it|keep it|not now|stop";
+const whole = (words) => new RegExp(`^(?:(?:${words})(?: |$))+$`);
+const YES = whole(YES_WORD);
+const NO = whole(NO_WORD);
+export const isNo = (t = '') => NO.test(tidy(t));
+/** A yes that also contains a no ("yes... actually don't") is not a yes: nothing is saved on an ambiguous reply. */
+export const isYes = (t = '') => tidy(t) !== 'please' && YES.test(tidy(t));

@@ -57,34 +57,61 @@ export function trimFiller(value) {
 }
 
 const SMALL = {
-  zero: 0, one: 1, a: 1, an: 1, single: 1, two: 2, couple: 2, pair: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
-  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, dozen: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  zero: 0, one: 1, single: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
   seventeen: 17, eighteen: 18, nineteen: 19,
 };
 const TENS = { twenty: 20, thirty: 30, forty: 40, fourty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
 const SCALE = { thousand: 1000, lakh: 100000, lakhs: 100000, million: 1000000 };
+// Counting nouns: "a couple", "two dozen". They MULTIPLY what came before (one if nothing did), never add to it —
+// adding is how "a couple" used to come out as 3 (a=1 + couple=2) and "a dozen" as 13.
+const GROUP = { couple: 2, pair: 2, dozen: 12 };
+const ARTICLE = new Set(['a', 'an']);
 const NUMERIC = /^\d+(\.\d+)?$/;
+const isNumberWord = (w) => w in SMALL || w in TENS || w in SCALE || w in GROUP || w === 'hundred' || /^\d+$/.test(w);
 
 /**
  * A spoken number as a number: "seven" -> 7, "one hundred and one" -> 101, "twenty-five" -> 25, "5 hundred" -> 500,
- * "12" -> 12. Null unless the WHOLE value is a number, so "Seven Cheese Pizza" is never turned into 7.
+ * "a couple" -> 2, "a dozen" -> 12, "12" -> 12. Null unless the WHOLE value is a number, so "Seven Cheese Pizza" is
+ * never turned into 7. "a"/"an" counts as one only when it stands alone or leads a counting word ("a hundred").
  */
 export function wordsToNumber(raw) {
   const t = String(raw ?? '').toLowerCase().replace(/[-,]/g, ' ').trim();
   if (NUMERIC.test(t)) return Number(t);
-  const words = t.split(/\s+/).filter((w) => w && w !== 'and');
+  const words = t.split(/\s+/).filter((w) => w && w !== 'and' && w !== 'of');
   if (!words.length) return null;
+  if (words.length === 1 && ARTICLE.has(words[0])) return 1;
   let total = 0;
   let current = 0;
-  for (const w of words) {
-    if (w in SMALL) current += SMALL[w];
+  for (const [i, w] of words.entries()) {
+    if (ARTICLE.has(w)) {
+      if (i !== 0 || !isNumberWord(words[i + 1] ?? '')) return null; // "two a" / "a pizza" are not numbers
+      current = 1;
+    } else if (w in SMALL) current += SMALL[w];
     else if (w in TENS) current += TENS[w];
     else if (/^\d+$/.test(w)) current += Number(w);
+    else if (w in GROUP) current = (current || 1) * GROUP[w];
     else if (w === 'hundred') current = (current || 1) * 100;
     else if (w in SCALE) { total += (current || 1) * SCALE[w]; current = 0; }
     else return null;
   }
   return total + current;
+}
+
+/**
+ * How many, from a spoken quantity that may carry its noun: "two pizzas" -> 2, "a couple of" -> 2, "3 boxes" -> 3.
+ * Reads the leading number phrase and ignores the rest. Null when there is no number at all ("some", "a few"), which
+ * the caller must ask about: falling back to the app's own 1 is a silent guess.
+ */
+export function quantityOf(raw) {
+  const words = String(raw ?? '').toLowerCase().replace(/[-,]/g, ' ').split(/\s+/).filter(Boolean);
+  for (let n = words.length; n > 0; n--) {
+    // A bare "a" is one only when it is the whole answer: "a few" is not one.
+    if (n === 1 && words.length > 1 && ARTICLE.has(words[0])) break;
+    const v = wordsToNumber(words.slice(0, n).join(' '));
+    if (v != null && Number.isInteger(v) && v > 0) return v;
+  }
+  return null;
 }
 
 /**
@@ -122,6 +149,11 @@ export function missingRequired(slots = {}, flowSlots = [], optional = []) {
  */
 export function replaySlots(given = {}, flowSlots = [], optional = []) {
   const fitted = fitToTaught(given, flowSlots);
+  // A quantity that was said but is not a number ("a few") is asked about, never dropped to the app's default of 1.
+  if (fitted.quantity != null && !/^\d+$/.test(String(fitted.quantity))) {
+    const { quantity: heard, ...rest } = fitted;
+    return { ask: { name: 'quantity', example: '', heard }, slots: rest };
+  }
   const missing = missingRequired(fitted, flowSlots, optional);
   if (missing) return { ask: missing, slots: fitted };
   return { slots: withDefaults(fitted, flowSlots, optional) };
@@ -130,7 +162,8 @@ export function replaySlots(given = {}, flowSlots = [], optional = []) {
 const LABEL = { item: 'item', num1: 'first number', num2: 'second number', query: 'search', setting: 'setting' };
 
 /** The question for a missing slot, naming what was used last time so the user can simply say it again. */
-export function askFor({ name, example }) {
+export function askFor({ name, example, heard }) {
+  if (name === 'quantity') return heard ? `How many should I get? I heard "${heard}", but not a number.` : 'How many should I get?';
   const what = LABEL[name] ?? name.replace(/[_-]+/g, ' ').replace(/(\d+)$/, ' $1').trim();
   return example ? `Which ${what} should I use? Last time it was ${example}.` : `Which ${what} should I use?`;
 }
@@ -143,11 +176,8 @@ export function normaliseSlots(slots = {}) {
       .map(([k, v]) => [k, trimFiller(v)])
       .filter(([, v]) => v !== ''),
   );
-  if (out.quantity != null) {
-    const q = String(out.quantity).trim().toLowerCase();
-    const n = wordsToNumber(q);
-    out.quantity = n != null && Number.isInteger(n) ? String(n) : (q.match(/\d+/)?.[0] ?? '');
-  }
+  // An unreadable quantity is kept AS SAID, so replaySlots asks about it instead of the app quietly ordering one.
+  if (out.quantity != null) out.quantity = String(quantityOf(out.quantity) ?? String(out.quantity).trim());
   if (out.address != null) out.address = String(out.address).trim().replace(/^(my|the)\s+/i, '');
   for (const k of Object.keys(out)) if (UNSET.test(String(out[k]))) delete out[k];
   return out;

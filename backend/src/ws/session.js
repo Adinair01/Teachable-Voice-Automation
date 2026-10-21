@@ -13,11 +13,21 @@ import { generalise, IMPLIED_SLOTS } from '../services/generalise.js';
 import { flowInput } from '../routes/flows.js';
 import { parseOpenApp, resolveApp } from '../services/openApp.js';
 import { HANDOVER_KINDS, handoverLine } from '../services/handover.js';
-import { isStatusQuery, statusLine, sentence } from '../services/runStatus.js';
+import { isStatusQuery, statusLine, sentence, tidyCommand } from '../services/runStatus.js';
+import { keytermsFor } from '../services/keyterms.js';
 
 /** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
 const TEACH_PROMPT = "I haven't learned that yet. Show me once: do it on the screen, then say done.";
 const CANCEL = /^\s*(cancel|never ?mind|forget it|no)\b/i;
+/** A question the assistant asked is only an open question for this long; after that a reply is a new command. */
+const PENDING_MS = 60_000;
+/** Said when understanding takes longer than this, so a slow model never leaves the user in silence. */
+const ACK_MS = 1200;
+const ACK = 'One moment.';
+const BUSY = "Sorry, my language service is busy right now. Please say that again in a few seconds.";
+// A reply that opens like a request is a new command, not an answer to the question that was asked.
+const COMMAND_START = /^\s*(?:(?:please|ok(?:ay)?|hey|so|and|now|actually|also)[\s,]+)*(?:(?:can|could|would) you\s+|i (?:want|need|would like|'d like) to\s+|let'?s\s+)?(order|book|buy|get me|open|call|send|play|set|search|find|calculate|compute|add|show|take me|navigate|turn|start|launch|text|message|email|did|what|how|where|is|are|do|does|tell)\b/i;
+const MAX_ANSWER_WORDS = 6;
 const DONE = /^\s*(done|i'?m done|finished|that'?s it|stop teaching)\b/i;
 
 const teachDone = z.object({
@@ -41,16 +51,46 @@ const runResult = z.object({
 });
 const fingerprint = (steps) => createHash('sha1').update(JSON.stringify(steps)).digest('hex');
 
+/** Everything the session reads or writes outside itself. Replaced in tests, so the whole chain runs without Mongo or Groq. */
+export const liveDeps = {
+  loadFlows: () => Flow.find().sort({ createdAt: -1 }).limit(100).lean(),
+  findFlow: (id) => Flow.findById(id).lean().catch(() => null),
+  createFlow: (doc) => Flow.create(doc),
+  updateFlowSteps: (id, steps) => Flow.updateOne({ _id: id }, { $set: { steps } }, { runValidators: true }),
+  log: (doc) => RunLog.create(doc),
+  lastRun: () => RunLog.findOne({ kind: 'replay' }).sort({ createdAt: -1 }).lean(),
+  pastPhrasings, matchFlow, extractIntent, synthesize,
+  stt: (opts) => new SttStream(opts),
+  now: () => Date.now(),
+};
+
 /** One phone connection: audio -> STT -> intent/match -> replay | teach; teach_done -> generalise -> save. */
 export class Session {
-  constructor(socket) { this.socket = socket; this.stt = null; this.sttMode = 'command'; this.teaching = null; this.apps = []; this.pending = null; this.pendingCorrection = null; }
+  constructor(socket, deps = liveDeps) {
+    this.socket = socket; this.deps = { ...liveDeps, ...deps };
+    this.stt = null; this.sttMode = 'command'; this.teaching = null; this.apps = []; this.pending = null; this.pendingCorrection = null;
+    /** The last replay sent to the phone: its flow, the values it ran with, and how the command was heard. */
+    this.lastReplay = null;
+    this.heard = null;
+    this.keyterms = [];
+    this.saidAt = 0;
+    this.refreshKeyterms();
+  }
 
   send(obj) { if (this.socket.readyState === 1) this.socket.send(JSON.stringify(obj)); }
 
+  /** Speech-recognition hints from what THIS user taught (dishes, restaurants, app names), not a fixed vocabulary. */
+  refreshKeyterms() {
+    return Promise.resolve().then(() => this.deps.loadFlows())
+      .then((flows) => { this.keyterms = keytermsFor(flows, this.apps); })
+      .catch((e) => logger.warn({ err: e.message }, 'keyterms not refreshed'));
+  }
+
   async say(text) {
+    this.saidAt = this.deps.now();
     this.send({ type: 'say', text });
     try {
-      const audio = await synthesize(text);
+      const audio = await this.deps.synthesize(text);
       this.send({ type: 'audio', format: 'mp3' });
       if (this.socket.readyState === 1) this.socket.send(audio);
     } catch (e) { logger.warn({ err: e.message }, 'tts failed; text only'); }
@@ -71,12 +111,12 @@ export class Session {
       case 'ping': return this.send({ type: 'pong' });
       case 'audio_start':
         this.stt?.finish().catch(() => {});
-        this.stt = new SttStream();
+        this.stt = this.deps.stt({ keyterms: this.keyterms });
         this.sttMode = msg.mode === 'confirm' ? 'confirm' : 'command'; // confirm: transcript only, never a command
         return;
       case 'say_request': return this.say(z.string().min(1).max(600).parse(msg.text));
       case 'audio_end': return this.#endAudio();
-      case 'apps': this.apps = appList.parse(msg).apps; return;
+      case 'apps': this.apps = appList.parse(msg).apps; this.refreshKeyterms(); return;
       case 'command': return this.handleCommand(z.string().min(1).max(500).parse(msg.text));
       case 'teach_done': return this.#learn(teachDone.parse(msg));
       case 'teach_cancel': this.teaching = null; return this.#logLearn(false, msg.command);
@@ -88,13 +128,19 @@ export class Session {
   async #endAudio() {
     const stt = this.stt; this.stt = null;
     if (!stt) return;
-    const text = await stt.finish();
+    const heard = await stt.finish();
+    const text = heard.text;
     this.send({ type: 'transcript', text });
     if (this.sttMode === 'confirm') return;
-    if (text) await this.handleCommand(text); else await this.say("Sorry, I didn't catch that.");
+    if (!text) return this.say("Sorry, I didn't catch that.");
+    // Understanding can take a second or more (a model may be rate limited): say something rather than nothing.
+    const started = this.deps.now();
+    const ack = setTimeout(() => { if (this.saidAt < started) this.say(ACK); }, ACK_MS);
+    try { await this.handleCommand(text, { heard: { ...heard, source: 'voice' } }); } finally { clearTimeout(ack); }
   }
 
-  async handleCommand(text) {
+  async handleCommand(text, { heard } = {}) {
+    this.heard = heard ?? { text, source: 'typed' };
     // Only "done" is meaningful while teaching; anything else would otherwise vanish without a word back.
     if (this.teaching) {
       // A clean voice exit: without this, "cancel"/"never mind" fell through to "I'm still watching" and the only way
@@ -110,43 +156,74 @@ export class Session {
       if (isNo(text)) return this.say("Okay, I've left the flow exactly as it was.");
     }
     if (isStatusQuery(text)) return this.#reportLastRun();
-    if (this.pending) {
-      const { flow, slots, slot, utterance } = this.pending; this.pending = null;
-      if (CANCEL.test(text)) return this.say('Okay, I cancelled that.');
-      // The answer fills the asked-for slot only ("Margherita please" -> "Margherita"). The ORIGINAL command is what gets
-      // logged against the flow: the bare answer is not a way of phrasing the task and must not be learned as one.
-      const answer = normaliseSlots({ [slot]: text })[slot] ?? text.trim();
-      return this.#replay(flow, utterance ?? text, { ...slots, [slot]: answer });
+    try {
+      return await this.#understand(text);
+    } catch (e) {
+      // Every model failing (rate limits) used to end in a silent 'internal error' to the phone. Say what happened.
+      logger.error({ err: e.message }, 'could not understand the command');
+      return this.say(BUSY);
     }
+  }
+
+  async #understand(text) {
+    const pending = this.pending; this.pending = null;
+    const open = pending && this.deps.now() - pending.at <= PENDING_MS;
+    if (open && CANCEL.test(text)) return this.say('Okay, I cancelled that.');
     const app = resolveApp(parseOpenApp(text), this.apps);
     if (app) {
       this.send({ type: 'launch_app', package: app.package, label: app.label });
       return this.say(`Opening ${app.label}.`);
     }
-    const flows = await Flow.find().sort({ createdAt: -1 }).limit(100).lean();
+    const flows = await this.deps.loadFlows();
     // Commands that already worked are handed to the matcher alongside each flow's taught wording, so the way this
     // user actually speaks keeps being recognised instead of only the sentence used while teaching.
-    const said = flows.length ? await pastPhrasings(flows) : {};
+    const said = flows.length ? await this.deps.pastPhrasings(flows) : {};
     const withSaid = flows.map((f) => ({ ...f, alsoSaidAs: said[String(f._id)] ?? [] }));
-    const m = flows.length ? await matchFlow(text, withSaid) : { ...(await extractIntent(text)), flowId: null };
+    const m = flows.length ? await this.deps.matchFlow(text, withSaid) : { ...(await this.deps.extractIntent(text)), flowId: null };
+    if (open) {
+      // EVERY reply is understood first. It answers the question only if it does not read as a new request: a reply
+      // that matches another flow, or starts like a command, used to be typed into the search box as the dish.
+      const values = this.#asAnswer(pending, text, m);
+      if (values) return this.#replay(pending.flow, pending.utterance, values);
+    }
     if (m.flowId) {
       const flow = flows.find((f) => String(f._id) === m.flowId);
       const slots = normaliseSlots(m.slots);
-      if (m.clarify) { // T13: never silently pick for the user
-        this.pending = { flow, slots, slot: m.clarify.slot, utterance: text };
-        return this.say(m.clarify.question);
-      }
+      if (m.clarify) return this.#ask({ flow, slots, slot: m.clarify.slot, utterance: text }, m.clarify.question); // T13
       return this.#replay(flow, text, slots);
     }
     // No flow matched although some exist: for an eval set of paraphrases that is a miss, and the metric would
     // flatter itself if only matched-and-replayed runs were ever counted. (A genuinely new task lands here too.)
-    if (flows.length) await RunLog.create({ kind: 'match', success: false, utterance: text });
+    if (flows.length) await this.deps.log({ kind: 'match', success: false, utterance: text, heard: this.heard });
     // Slots for a new task always come from the dedicated extractor: the matcher's side-output for a non-match can
     // return a whole phrase ("5 plus 3") as one slot, which then cannot be found in the demonstration.
-    const intent = await extractIntent(text);
-    this.teaching = { command: text, intentKey: intent.intentKey, slots: intent.slots ?? {} };
-    this.send({ type: 'teach_start', ...this.teaching });
+    const intent = await this.deps.extractIntent(text);
+    // Normalised at teach time too, so the flow is learned with the same value shapes a replay will bring.
+    this.teaching = { command: text, intentKey: intent.intentKey, slots: normaliseSlots(intent.slots ?? {}), heard: this.heard };
+    this.send({ type: 'teach_start', command: text, intentKey: this.teaching.intentKey, slots: this.teaching.slots });
     return this.say(TEACH_PROMPT);
+  }
+
+  /** Remembers the question so the next reply can answer it, for [PENDING_MS] at most. */
+  #ask(pending, question) {
+    this.pending = { ...pending, at: this.deps.now() };
+    return this.say(question);
+  }
+
+  /**
+   * The values to run with if [text] answers the open question, else null (it is a new command). The same flow
+   * matched: its values fill the gaps, the reply's own values win. Another flow: new command. Nothing matched: an
+   * answer only if it is short and does not open like a request ("Farmhouse", "the farmhouse one", "three").
+   */
+  #asAnswer(pending, text, m) {
+    const same = m.flowId && m.flowId === String(pending.flow._id);
+    if (m.flowId && !same) return null;
+    const own = same ? normaliseSlots(m.slots) : {};
+    if (own[pending.slot] != null) return { ...pending.slots, ...own };
+    const words = text.trim().split(/\s+/).length;
+    if (COMMAND_START.test(text) || words > MAX_ANSWER_WORDS) return null;
+    const answer = normaliseSlots({ [pending.slot]: text })[pending.slot] ?? text.trim();
+    return { ...pending.slots, ...own, [pending.slot]: answer };
   }
 
   /**
@@ -156,54 +233,59 @@ export class Session {
    */
   #replay(flow, utterance, given) {
     const { ask, slots } = replaySlots(given, flow.slots, IMPLIED_SLOTS.map((s) => s.name));
-    if (ask) {
-      this.pending = { flow, slots, slot: ask.name, utterance };
-      return this.say(askFor(ask));
-    }
+    if (ask) return this.#ask({ flow, slots, slot: ask.name, utterance }, askFor(ask));
+    this.lastReplay = { flowId: String(flow._id), slots, heard: this.heard };
     this.send({ type: 'replay', flowId: String(flow._id), utterance, flow, slots });
     return this.say('Okay, doing that now.');
   }
 
   async #reportLastRun() {
-    const run = await RunLog.findOne({ kind: 'replay' }).sort({ createdAt: -1 }).lean();
-    const flow = run?.flowId ? await Flow.findById(run.flowId).lean() : null;
+    const run = await this.deps.lastRun();
+    const flow = run?.flowId ? await this.deps.findFlow(run.flowId) : null;
     return this.say(statusLine(run, flow));
   }
 
   async #learn(body) {
+    const heard = this.teaching?.heard;
     this.teaching = null;
-    const g = generalise(body);
+    // The description is said back ("Learned: …") and in status answers: without Deepgram's mid-command full stops.
+    const g = generalise({ ...body, command: tidyCommand(body.command) });
     const actionable = g.steps.filter((s) => s.type !== 'launch').length;
-    const ok = actionable >= 1 && (g.slots.length === 0 || g.slotsFound);
+    // EVERY value the command named must be one the demonstration used. One that wasn't stays a literal of the demo
+    // in its step, and each later run would quietly repeat it — "order a Farmhouse" ordering the taught Margherita.
+    const ok = actionable >= 1 && g.missing.length === 0;
     if (!ok) {
       // A failed learn used to leave no trace of what was actually recorded, making it undebuggable after the fact.
       logger.warn({ command: body.command, slots: g.slots, actionable, slotsFound: g.slotsFound,
         steps: body.steps.map((s) => ({ type: s.type, text: s.selector?.text, desc: s.selector?.contentDesc,
           value: s.value, context: s.context })) }, 'learn failed');
-      await this.#logLearn(false, body.command);
+      await this.#logLearn(false, body.command, undefined, heard);
       this.send({ type: 'teach_failed' }); // lets the phone drop out of "Saving…" instead of hanging there
-      return this.say(g.slots.length && !g.slotsFound
-        ? `I couldn't find "${g.slots[0].example}" in what you did, so I haven't saved anything. Say the command again to show me from the start.`
+      return this.say(g.missing.length && actionable >= 1
+        ? `I couldn't find "${g.missing[0].example}" in what you did, so I haven't saved anything. Say the command again to show me from the start.`
         : actionable === 0 && g.steps.length
           ? "I only saw an app being opened. To open an app, just say open and its name. Teach me a task inside the app instead."
           : "I didn't see any actions, so there's nothing to save. Say the command again when you want to show me.");
     }
-    const { slotsFound, ...doc } = g;
-    const flow = await Flow.create(flowInput.parse(doc));
-    await this.#logLearn(true, body.command, flow._id);
+    const { slotsFound, missing, ...doc } = g;
+    const flow = await this.deps.createFlow(flowInput.parse(doc));
+    await this.#logLearn(true, body.command, flow._id, heard);
+    this.refreshKeyterms();
     this.send({ type: 'learned', flowId: String(flow._id), steps: g.steps.length });
     return this.say(`Learned: ${flow.description}.`);
   }
 
-  #logLearn(success, utterance, flowId) { return RunLog.create({ kind: 'learn', success, utterance, flowId }); }
+  #logLearn(success, utterance, flowId, heard) { return this.deps.log({ kind: 'learn', success, utterance, flowId, heard }); }
 
   async #logRun(r) {
-    const base = { flowId: r.flowId, success: r.success, utterance: r.utterance };
-    await RunLog.create({ ...base, kind: 'replay', declined: r.declined, handover: r.handover?.kind, stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
+    // The values and the transcript of the replay this result belongs to (the phone does not send them back).
+    const mine = this.lastReplay?.flowId === r.flowId ? this.lastReplay : null;
+    const base = { flowId: r.flowId, success: r.success, utterance: r.utterance, slots: mine?.slots, heard: mine?.heard };
+    await this.deps.log({ ...base, kind: 'replay', declined: r.declined, handover: r.handover?.kind, stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
     // A phrasing counts as correctly matched when the matched flow then ran to completion — or when the user
     // stopped it at a sensitive step, which says nothing about the match being wrong.
     // A handover also means the right flow ran: it got as far as the user's own credentials or payment.
-    if (r.utterance && !r.declined) await RunLog.create({ ...base, kind: 'match', success: r.success || !!r.handover });
+    if (r.utterance && !r.declined) await this.deps.log({ ...base, kind: 'match', success: r.success || !!r.handover });
     // What happened, then (if the user's answers showed the flow is out of date) the offer to fix it — ONE spoken
     // message, because two back-to-back ones can cut each other off on the phone.
     let line;
@@ -222,21 +304,22 @@ export class Session {
   /** Works out what to propose from the run's corrections and remembers it for the user's yes or no. */
   async #offerCorrections(r) {
     if (!r.corrections.length) return '';
-    const flow = await Flow.findById(r.flowId).lean().catch(() => null);
+    const flow = await this.deps.findFlow(r.flowId);
     if (!flow) return '';
-    const planned = plan(flow.steps, r.corrections);
+    // The run's own values: an answer that named this request's dish must not be learned as a fixed tap.
+    const planned = plan(flow.steps, r.corrections, this.lastReplay?.flowId === r.flowId ? this.lastReplay.slots : {});
     const text = describe(planned);
     if (planned.offer.length) this.pendingCorrection = { flowId: String(flow._id), offer: planned.offer, seen: fingerprint(flow.steps) };
     return text;
   }
 
   async #applyCorrections({ flowId, offer, seen }) {
-    const flow = await Flow.findById(flowId).lean().catch(() => null);
+    const flow = await this.deps.findFlow(flowId);
     if (!flow) return this.say("I can't find that flow any more, so nothing was changed.");
     // The flow may have been re-taught between the run and the yes: never apply a change meant for a different version.
     if (fingerprint(flow.steps) !== seen) return this.say('That flow has changed since, so I did not touch it.');
     const steps = apply(flow.steps, offer);
-    await Flow.updateOne({ _id: flow._id }, { $set: { steps } }, { runValidators: true });
+    await this.deps.updateFlowSteps(flow._id, steps);
     logger.info({ flowId, ops: offer.map((o) => `${o.op}@${o.step}`) }, 'flow updated from the user\'s corrections');
     return this.say(`Done. I've updated the flow, ${offer.length === 1 ? 'one step' : `${offer.length} steps`} changed.`);
   }

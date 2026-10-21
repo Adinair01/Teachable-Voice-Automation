@@ -12,6 +12,13 @@ const runLogSchema = new mongoose.Schema({
   handover: { type: String, enum: HANDOVER_KINDS },
   stepResults: [{ index: Number, ok: Boolean, usedLlmFallback: Boolean, error: String, _id: false }],
   utterance: String,
+  // The values the replay ran with (for "stopped at tapping Pizza Hut" in status answers).
+  slots: { type: Map, of: String },
+  // How the command was heard: the recogniser's transcript, confidence and words, or source 'typed'.
+  heard: {
+    text: String, confidence: Number, source: { type: String, enum: ['voice', 'typed'] },
+    words: [{ w: String, s: Number, e: Number, c: Number, _id: false }],
+  },
   createdAt: { type: Date, default: Date.now, index: true },
 });
 
