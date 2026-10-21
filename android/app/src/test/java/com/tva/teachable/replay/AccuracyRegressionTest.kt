@@ -416,6 +416,6 @@ class AccuracyRegressionTest {
         for (order in listOf(listOf(plain, s24, ultra), listOf(ultra, plain, s24), listOf(s24, ultra, plain)))
             assertEquals(order.toString(), ultra, added(shop(*order.toTypedArray()), "S25 ultra 12GB256GB phone"))
         // Two different listings sharing the same number of words: no guess.
-        assertNull(added(shop(plain, "Samsung Galaxy S25 Edge 5G AI Smartphone (Silver, 12GB RAM, 256GB Storage)"), "S25 12GB 256GB"))
+        assertNull(added(shop(ultra, "Samsung Galaxy S25 Edge 5G AI Smartphone (Silver, 12GB RAM, 256GB Storage)"), "S25 256GB"))
     }
 }
