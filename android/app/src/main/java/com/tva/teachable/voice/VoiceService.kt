@@ -43,6 +43,8 @@ class VoiceService : Service() {
     private lateinit var recorder: PttRecorder
     private lateinit var player: AudioPlayer
     private var teach: JSONObject? = null
+    /** Fires if "Thinking…" gets no reply at all, so it never stays on screen for good. */
+    private var thinking: kotlinx.coroutines.Job? = null
     private var expectAudio = false
     private var confirm: CompletableDeferred<Boolean>? = null
     @Volatile private var awaitingConfirmSpeech = false
@@ -77,8 +79,12 @@ class VoiceService : Service() {
 
     /** Server-side session state dies with the socket, so a reconnect must drop any half-finished teach session too. */
     private fun onConnection(up: Boolean) {
+        val was = AppState.connected.value
         AppState.connected.value = up
         AppState.log(if (up) "connected" else "disconnected")
+        // Say it on the panel: unplugging the cable (or losing the adb port forward) used to leave "Thinking…" up for good.
+        if (!up && (was || AppState.status.value == THINKING)) { thinking?.cancel(); AppState.status.value = OFFLINE }
+        if (up && AppState.status.value == OFFLINE) AppState.status.value = "Idle"
         if (up) client.send(JSONObject().put("type", "apps").put("apps", InstalledApps.toJson(this)))
         if (up && teach != null) {
             TvaAccessibilityService.instance?.stopRecording()
@@ -97,6 +103,8 @@ class VoiceService : Service() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             AppState.log("microphone permission missing — open the app and allow it"); return
         }
+        // Nothing to send it to: say so now, rather than record and then wait on a reply that cannot come.
+        if (!AppState.connected.value) { AppState.status.value = OFFLINE; AppState.log("not connected — voice not sent"); return }
         // The user talking cuts the assistant off at once: its voice would otherwise be recorded as part of what they say
         // (seen live: "Step 12. You asked me to stop. Order a Farmhouse pizza…").
         player.release()
@@ -115,7 +123,12 @@ class VoiceService : Service() {
     fun pttStop() {
         if (AppState.listen.value == ListenMode.IDLE) return
         handsFreeCap?.cancel(); handsFreeCap = null
-        recorder.stop(); AppState.listen.value = ListenMode.IDLE; AppState.status.value = "Thinking…"
+        recorder.stop(); AppState.listen.value = ListenMode.IDLE; AppState.status.value = THINKING
+        thinking?.cancel()
+        thinking = scope.launch {
+            delay(THINKING_MAX_MS)
+            if (AppState.status.value == THINKING) { AppState.status.value = NO_REPLY; AppState.log("no reply from the assistant within ${THINKING_MAX_MS / 1000}s") }
+        }
         client.send(JSONObject().put("type", "audio_end"))
     }
 
@@ -125,6 +138,7 @@ class VoiceService : Service() {
         // brand-new command and open teach mode. Deliberately not done for the sensitive-step confirmation: that stays
         // a spoken or button-pressed yes, whatever else is typed.
         if (awaitingAnswer && text.isNotBlank()) { answer?.complete(text); return }
+        if (!AppState.connected.value) { AppState.status.value = OFFLINE; AppState.log("not connected — command not sent"); return }
         client.send(JSONObject().put("type", "command").put("text", text))
     }
 
@@ -143,6 +157,7 @@ class VoiceService : Service() {
     }
 
     private fun onServer(m: JSONObject) {
+        thinking?.cancel() // the assistant answered
         when (m.optString("type")) {
             "transcript" -> onTranscript(m.optString("text"))
             "say" -> AppState.log("assistant: ${m.optString("text")}")
@@ -259,6 +274,10 @@ class VoiceService : Service() {
         private const val CHANNEL = "voice"
         private const val HANDS_FREE_MAX_MS = 60_000L
         private const val ANSWER_MS = 90_000L
+        private const val THINKING = "Thinking…"
+        private const val THINKING_MAX_MS = 20_000L
+        private const val OFFLINE = "Not connected to the assistant. Check the USB cable or Wi-Fi."
+        private const val NO_REPLY = "No reply from the assistant. Hold the button and try again."
         /** Longest a question may take to be synthesised and played before the answer wait starts anyway. */
         private const val QUESTION_SAID_MS = 30_000L
         private const val SPOKEN_MAX = 500
