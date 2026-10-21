@@ -9,6 +9,8 @@ import com.tva.teachable.core.CorrectionKind
 import com.tva.teachable.core.CorrectionOp
 import com.tva.teachable.core.CorrectionPolicy
 import com.tva.teachable.core.CartState
+import com.tva.teachable.core.Captions
+import com.tva.teachable.core.Interruptions
 import com.tva.teachable.core.BoundaryKind
 import com.tva.teachable.core.Flow
 import com.tva.teachable.core.FlowStep
@@ -24,6 +26,7 @@ import com.tva.teachable.core.Steppers
 import com.tva.teachable.core.UiNode
 import com.tva.teachable.core.resolveSlots
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** What the replayer needs from the phone. Implemented by the AccessibilityService; faked in tests. */
 interface Device {
@@ -39,7 +42,15 @@ interface Device {
 fun interface ConfirmationGate { suspend fun confirm(step: FlowStep, slots: Map<String, String>): Boolean }
 val DenyAll = ConfirmationGate { _, _ -> false }
 
-data class ReplayConfig(val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300, val scrollTries: Int = 3, val settleMs: Long = 3000)
+/**
+ * [stepBudgetMs]: how long one step may look for its target before it must ask — every retry, scroll and the LLM picker
+ * share it, so a stuck step is put to the user (and spoken) within ~20 s. It once took 37.9 s.
+ * [runCapMs]: the most a whole run may take, not counting time spent waiting for the user's answers.
+ */
+data class ReplayConfig(
+    val waitMs: Long = 6000, val retryMs: Long = 3000, val pollMs: Long = 300, val scrollTries: Int = 3, val settleMs: Long = 3000,
+    val stepBudgetMs: Long = 16_000, val runCapMs: Long = 150_000, val clock: () -> Long = System::currentTimeMillis,
+)
 data class StepResult(
     val index: Int, val ok: Boolean, val usedLlmFallback: Boolean = false, val error: String? = null,
     val declined: Boolean = false, val handover: Boundary? = null,
@@ -78,11 +89,24 @@ class Replayer(
     /** The text the previous step just typed, and where: lets the NEXT step ask for one retry if the typing did not take. */
     private data class Typed(val index: Int, val sel: Selector, val value: String)
     private var lastTyped: Typed? = null
+    private var runStart = 0L
+    /** Time spent waiting for the user's answers: not the assistant's to account for in [ReplayConfig.runCapMs]. */
+    private var userTime = 0L
+    private var deadline = Long.MAX_VALUE
+    private fun now() = cfg.clock()
+    /** What is left of this step's budget, capped at [ms]. */
+    private fun within(ms: Long) = minOf(ms, (deadline - now()).coerceAtLeast(0))
+    private fun outOfTime() = now() >= deadline
 
     suspend fun run(flow: Flow, slots: Map<String, String>): RunResult {
         appPackage = flow.appPackage; llmPicks = 0; asked = 0; corrections.clear(); lastTyped = null
+        runStart = now(); userTime = 0
         val results = ArrayList<StepResult>()
         for ((i, step) in flow.steps.withIndex()) {
+            if (now() - runStart - userTime > cfg.runCapMs) {
+                val err = "This has taken over ${cfg.runCapMs / 60_000} minutes of trying, so I've stopped at step ${i + 1} instead of carrying on."
+                return done(false, results + StepResult(i, false, error = err))
+            }
             val next = flow.steps.getOrNull(i + 1)
             var r = runStep(i, step, next, slots)
             // A step that could not proceed is a question, not a verdict: ask, act on the answer, and carry on.
@@ -152,7 +176,7 @@ class Replayer(
         val before = device.tree()
         val wasInFront = before.nodes.firstOrNull()?.packageName == pkg
         val beforeSig = signature(before)
-        if (!device.launch(pkg)) return StepResult(i, false, error = "I couldn't open that app.")
+        if (!device.launch(pkg)) return StepResult(i, false, error = "I couldn't open $pkg. It may not be installed on this phone.")
         val arrived = waitFor { t ->
             t.nodes.firstOrNull()?.packageName == pkg && (!wasInFront || signature(t) != beforeSig)
         }
@@ -187,9 +211,11 @@ class Replayer(
         val isTap = step.type == StepType.TAP
         val slotValue = step.slotRef?.let { slots[it] }
         val probe = probeFor(step.type, sel, slotValue)
+        // Every way of looking for the target below shares this one budget, so a stuck step reaches its question in time.
+        deadline = now() + cfg.stepBudgetMs
 
         var fallback = false
-        var found = poll(cfg.waitMs, probe)
+        var found = poll(within(cfg.waitMs), probe)
         // A value the command parameterised may need entering one character at a time: the demonstration tapped the
         // single key "5", but "12" is two keys and no button carries that label.
         if (found == null && isTap && step.slotRef != null) {
@@ -210,7 +236,7 @@ class Replayer(
         // rather than clear the way, and never anywhere near a cart-replacement prompt.
         if (found == null && !blocksAutoDismissal(device.tree().nodes)) {
             var passes = 0
-            while (found == null && passes < MAX_DISMISSALS && passInterstitial(DISMISSAL)) { passes++; found = poll(cfg.retryMs, probe) }
+            while (found == null && passes < MAX_DISMISSALS && !outOfTime() && passInterstitial(Interruptions.DISMISSAL)) { passes++; found = poll(within(cfg.retryMs), probe) }
         }
         // A tap the user once said can be left out. Only ever a plain tap: a missing slot target is never skipped quietly.
         if (found == null && step.optional && step.slotRef == null && isTap) {
@@ -223,7 +249,7 @@ class Replayer(
             alreadyInCart(step, slots)?.let { return StepResult(i, false, error = it, cause = StuckCause.CART_CONFLICT) }
             if (found == null) found = retypedOnce(i, probe)
             repeat(cfg.scrollTries) {
-                if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, probe)
+                if (found == null && !outOfTime() && device.scroll(device.tree())) found = poll(within(cfg.retryMs), probe)
             }
             if (found == null) return stuckResult(i, step, sel, "\"${sel.near}\"")
         }
@@ -236,15 +262,16 @@ class Replayer(
         if (found == null && sel.near.isEmpty() && (isTap || !slotValue.isNullOrEmpty())) {
             if (found == null) found = retypedOnce(i, probe)
             repeat(cfg.scrollTries) {
-                if (found == null && device.scroll(device.tree())) found = poll(minOf(cfg.retryMs, SCROLL_SETTLE_MS), probe)
+                if (found == null && !outOfTime() && device.scroll(device.tree())) found = poll(within(minOf(cfg.retryMs, SCROLL_SETTLE_MS)), probe)
             }
         }
-        if (found == null) found = poll(cfg.retryMs, probe) // retry once
+        if (found == null && !outOfTime()) found = poll(within(cfg.retryMs), probe) // retry once
         // LLM fallback: also how unexpected popups get dismissed/bypassed. Capped per run so a screen that keeps
         // changing under the assistant ends in a question instead of a string of guesses.
-        if (found == null && picker != null && llmPicks < MAX_LLM_PICKS) {
+        if (found == null && picker != null && llmPicks < MAX_LLM_PICKS && within(Long.MAX_VALUE) >= MIN_PICK_MS) {
             val tree = device.tree()
-            val idx = picker.pick(step, slots, tree.nodes)
+            // A slow model must not hold the question back: whatever is left of the budget, and no more.
+            val idx = withTimeoutOrNull(within(Long.MAX_VALUE)) { picker.pick(step, slots, tree.nodes) }
             // A guess must never be the one that throws the user's cart or data away ("Replace", "Clear").
             val guess = tree.nodes.getOrNull(idx ?: -1)
             val accepted = guess?.takeUnless { CartState.DESTRUCTIVE.containsMatchIn(it.text + " " + it.contentDesc) }
@@ -256,6 +283,7 @@ class Replayer(
         }
         var (tree, node) = found ?: return stuckResult(i, step, sel, targetLabel(step, sel))
         if (isTap) ScreenGuard.action(tree.nodes, node)?.let { return handover(i, it) }
+        if (isTap) destroys(tree, node, step)?.let { return refused(i, step, sel, it) }
         var before = signature(tree)
         var acted = if (isTap) device.tap(tree, node) else typeAndVerify(tree, node, sel, value)
         if (!acted) {
@@ -265,6 +293,7 @@ class Replayer(
             delay(cfg.pollMs)
             poll(cfg.retryMs, probe)?.let { (t2, n2) ->
                 if (isTap) ScreenGuard.action(t2.nodes, n2)?.let { return handover(i, it) }
+                if (isTap) destroys(t2, n2, step)?.let { return refused(i, step, sel, it) }
                 tree = t2; node = n2; before = signature(t2)
                 acted = if (isTap) device.tap(t2, n2) else typeAndVerify(t2, n2, sel, value)
             }
@@ -277,12 +306,33 @@ class Replayer(
     }
 
     /**
+     * The caption of [node] (and what is inside it) when tapping it could throw the user's cart or data away —
+     * "Replace", "Clear cart", "Remove" — and the step was NOT taught on such a word. Checked on EVERY tap, not only on
+     * guesses: an id match once tapped "Replace" on a replace-cart dialog. A taught "Clear" (a calculator's) is allowed.
+     */
+    private fun destroys(tree: LiveTree, node: UiNode, step: FlowStep?): String? {
+        val caption = RowContext.subtree(tree.nodes, node).take(SUBTREE_MAX).joinToString(" ") { if (it.password) "" else "${it.text} ${it.contentDesc}" }.trim()
+        if (!CartState.DESTRUCTIVE.containsMatchIn(caption)) return null
+        if (step != null && CartState.DESTRUCTIVE.containsMatchIn("${step.selector.text} ${step.selector.contentDesc}")) return null
+        return caption.take(40)
+    }
+
+    /** A destructive control is never tapped on the flow's behalf: say what it is and ask, instead. */
+    private fun refused(i: Int, step: FlowStep, sel: Selector, caption: String): StepResult {
+        val nodes = device.tree().nodes
+        val cause = if (CartState.replacePrompt(nodes) != null) StuckCause.REPLACE_PROMPT else StuckCause.MISSING_TARGET
+        return StepResult(i, false, cause = cause,
+            error = "I was looking for ${targetLabel(step, sel)}, and the control here is \"$caption\", which could throw your cart or data away, so I won't tap it. This screen shows ${ScreenSummary.of(nodes)}. What should I do?")
+    }
+
+    /**
      * The step before this one typed into a field and this step's target is still missing: the text may have landed in the
      * field without the app acting on it (a search that never ran — seen live on Zomato, where entering the same text by
      * hand a moment later worked). Clear the field and enter the value once more, then wait again. Once per step, only
      * right after a typing step, only into the same field, and it presses nothing: it cannot loop or wander.
      */
     private suspend fun retypedOnce(i: Int, probe: (LiveTree) -> Pair<LiveTree, UiNode>?): Pair<LiveTree, UiNode>? {
+        if (outOfTime()) return null
         val typed = lastTyped?.takeIf { it.index == i - 1 && it.value.isNotBlank() } ?: return null
         lastTyped = null // one retry per typing step, whatever happens next
         val t = device.tree()
@@ -294,7 +344,7 @@ class Replayer(
         val t2 = device.tree()
         val again = SelectorMatcher.target(t2.nodes, typed.sel, null, forTap = false) ?: return null
         if (!device.type(t2, again, typed.value)) return null
-        return poll(cfg.waitMs, probe)
+        return poll(within(cfg.waitMs), probe)
     }
 
     /**
@@ -337,9 +387,9 @@ class Replayer(
         if (v.any { keyFor(it, tree) == null }) return null
         for (c in v) {
             val t = device.tree()
-            val key = keyFor(c, t) ?: return StepResult(i, false, error = stuck("the key \"$c\""))
+            val key = keyFor(c, t) ?: return StepResult(i, false, error = stuck("the key \"$c\""), cause = StuckCause.SLOT_ABSENT)
             ScreenGuard.action(t.nodes, key)?.let { return handover(i, it) }
-            if (!device.tap(t, key)) return StepResult(i, false, error = "couldn't press \"$c\"")
+            if (!device.tap(t, key)) return StepResult(i, false, error = "I pressed part of \"$v\" but the key \"$c\" didn't respond. What should I do?", cause = StuckCause.SLOT_ABSENT)
             poll(cfg.settleMs) { tt -> tt.takeIf { signature(it) != signature(t) } }
         }
         android.util.Log.i("TVA", "replay: entered \"$v\" one key at a time")
@@ -378,9 +428,13 @@ class Replayer(
      */
     private suspend fun passInterstitial(allowed: Regex = INTERSTITIAL): Boolean {
         val t = device.tree()
-        val node = t.nodes.firstOrNull { n ->
-            n.clickable && allowed.matches((n.text.ifBlank { n.contentDesc }).trim()) && ScreenGuard.action(t.nodes, n) == null
-        } ?: return false
+        // Never on a screen that is asking for a cart decision: its "OK" would make the decision for the user.
+        if (blocksAutoDismissal(t.nodes)) return false
+        // Of several candidates, one that only CLOSES is preferred to one that moves on; either is cleared by the guards
+        // first, so which one comes first in the tree can no longer matter for safety.
+        val node = t.nodes.filter { n ->
+            n.clickable && allowed.matches((n.text.ifBlank { n.contentDesc }).trim()) && ScreenGuard.action(t.nodes, n) == null && destroys(t, n, null) == null
+        }.minByOrNull { if (Interruptions.isDismissal(it.text.ifBlank { it.contentDesc })) 0 else 1 } ?: return false
         val before = signature(t)
         device.tap(t, node)
         return poll(cfg.settleMs) { tt -> tt.takeIf { signature(it) != before } } != null
@@ -423,8 +477,17 @@ class Replayer(
             ?: return StepResult(i, false, error = "couldn't find where to change the delivery address")
         device.tap(opener.first, opener.second)
 
-        val entry = { t: LiveTree -> t.nodes.firstOrNull { !it.editable && (it.text.trim().equals(label, true) || it.contentDesc.trim().equals(label, true)) }?.let { t to it } }
+        val isEntry = { n: UiNode -> !n.editable && (n.text.trim().equals(label, true) || n.contentDesc.trim().equals(label, true)) }
+        val entry = { t: LiveTree -> t.nodes.firstOrNull(isEntry)?.let { t to it } }
         var found = poll(cfg.waitMs, entry)
+        // Two saved addresses with the same label are two different places: never pick one by list order.
+        found?.let { (t, _) ->
+            val rows = t.nodes.filter(isEntry).map { n -> RowContext.of(t.nodes, n, isEntry).map(RowContext::norm).toSet() }.distinct()
+            if (rows.size > 1) {
+                device.back()
+                return StepResult(i, false, error = "You have ${rows.size} saved addresses called \"$label\", and I can't tell which one you mean. Which should I use?")
+            }
+        }
         repeat(cfg.scrollTries) { if (found == null && device.scroll(device.tree())) found = poll(cfg.retryMs, entry) }
         val (tree, node) = found ?: run {
             device.back() // close the picker again rather than leave the user in it
@@ -484,7 +547,7 @@ class Replayer(
         while (asked < MAX_QUESTIONS) {
             val cause = r.cause ?: return r
             asked++
-            val reply = asker!!.ask(Stuck(i, cause, spoken(r, cause, done, total, note)))
+            val reply = ask(Stuck(i, cause, spoken(r, cause, done, total, note)))
                 ?: return r.copy(error = "I didn't hear back, so I stopped", cause = null)
             note = ""
             when (val a = AnswerParser.parse(reply)) {
@@ -556,7 +619,7 @@ class Replayer(
                 note, "I've done all ${flow.steps.size} steps, but I'm not on the cart or checkout screen.",
                 "This screen shows ${ScreenSummary.of(nodes)}.", "What should I tap to get to your cart? Or say stop.",
             ).filter { it.isNotBlank() }.joinToString(" ")
-            val reply = asker.ask(Stuck(flow.steps.size, StuckCause.MISSING_TARGET, spoken)) ?: return null
+            val reply = ask(Stuck(flow.steps.size, StuckCause.MISSING_TARGET, spoken)) ?: return null
             note = ""
             when (val a = AnswerParser.parse(reply)) {
                 Answer.Stop, Answer.Skip -> return null
@@ -588,6 +651,12 @@ class Replayer(
             }
         }
         return null
+    }
+
+    /** Puts a question to the user; the time spent waiting for them does not count against the run's cap. */
+    private suspend fun ask(q: Stuck): String? {
+        val t = now()
+        try { return asker!!.ask(q) } finally { userTime += now() - t }
     }
 
     private suspend fun reachedCheckout(): Boundary? = poll(cfg.waitMs) { t -> ScreenGuard.screen(t.nodes) ?: ScreenGuard.readyToPay(t.nodes) }
@@ -727,23 +796,41 @@ class Replayer(
      * what we actually asked for", which catches a tap that opened the wrong restaurant or dish.
      */
     private suspend fun finish(i: Int, step: FlowStep, acted: Boolean, fallback: Boolean = false, slots: Map<String, String> = emptyMap()): StepResult {
-        if (!acted) return StepResult(i, false, fallback, if (step.type == StepType.BACK) "the back button didn't respond" else "that didn't work")
+        if (!acted) {
+            return if (step.type == StepType.BACK) StepResult(i, false, fallback, "I pressed back, but nothing happened. What should I do?", cause = StuckCause.MISSING_TARGET)
+            else StepResult(i, false, fallback, "that didn't work")
+        }
         val e = step.expect
         val want = resolveSlots(e.textContains, slots)
         if (e.packageName.isEmpty() && want.isEmpty()) return StepResult(i, true, fallback)
         val ok = waitFor { t ->
             (e.packageName.isEmpty() || t.nodes.firstOrNull()?.packageName == e.packageName) && names(t.nodes, want)
         }
-        return if (ok) StepResult(i, true, fallback) else StepResult(i, false, fallback, "expected screen not reached")
+        if (ok) return StepResult(i, true, fallback)
+        // Not a dead end: say what was tapped, what was expected and what is there instead, and ask.
+        val nodes = device.tree().nodes
+        val pkg = nodes.firstOrNull()?.packageName.orEmpty()
+        val what = targetLabel(step, resolved(step.selector, slots))
+        return if (e.packageName.isNotEmpty() && pkg.isNotEmpty() && pkg != e.packageName) {
+            StepResult(i, false, fallback, "I tapped $what, but I've ended up outside the app, in ${pkg.substringAfterLast('.')}. Can you take me back to it?", cause = StuckCause.WRONG_APP)
+        } else {
+            StepResult(i, false, fallback, "I tapped $what, but the screen that opened doesn't mention \"$want\". It shows ${ScreenSummary.of(nodes)}. Is this the wrong place?",
+                cause = if (step.slotRef != null) StuckCause.SLOT_ABSENT else StuckCause.MISSING_TARGET)
+        }
     }
 
-    /** Does any caption carry [want]? Punctuation- and spacing-insensitive, so "Corn & Cheese" matches "corn and cheese". */
+    /**
+     * Does any caption name [want]? Punctuation-, spacing- and plural-insensitive, and the item's main word is enough:
+     * "Farmhouse pizzas" asked, "Farmhouse Pizza" shown, is the same dish (that used to fail the step), while
+     * "Double Cheese Margherita" does not name "Farmhouse pizza".
+     */
     private fun names(nodes: List<UiNode>, want: String): Boolean {
         if (want.isEmpty()) return true
         val w = RowContext.norm(want)
         return nodes.any { n ->
             !n.password && (n.text.contains(want, true) || n.contentDesc.contains(want, true) ||
-                (w.isNotEmpty() && (RowContext.norm(n.text).contains(w) || RowContext.norm(n.contentDesc).contains(w))))
+                (w.isNotEmpty() && (RowContext.norm(n.text).contains(w) || RowContext.norm(n.contentDesc).contains(w))) ||
+                Captions.mentions(n.text, want) || Captions.mentions(n.contentDesc, want))
         }
     }
 
@@ -768,9 +855,9 @@ class Replayer(
             "button", "more", "view", "continue", "proceed", "next", "done", "the", "and", "for", "with")
         const val MAX_DISMISSALS = 2
         const val SCROLL_SETTLE_MS = 1200L
-        // What a blind pre-step may tap: controls that only CLOSE something. No Continue/Proceed (they advance the
-        // flow, which once opened the cart behind a step's back) and no OK (it confirms as often as it informs).
-        val DISMISSAL = Regex("^(close|skip|not now|maybe later|no thanks|got it|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
+        /** Below this much budget the LLM picker is not asked: its answer could not arrive before the question is due. */
+        const val MIN_PICK_MS = 1500L
+        const val SUBTREE_MAX = 30
         val DISMISS = Regex("^(close|skip|not now|maybe later|no thanks|got it|ok|okay|allow|cancel|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
         // Benign pass-through controls an upsell/interstitial can sit behind, on top of the cart ("Add items worth ₹X…
         // Continue"). Only ever tapped when ScreenGuard clears it, so a genuine "Continue to pay" is still handed over.

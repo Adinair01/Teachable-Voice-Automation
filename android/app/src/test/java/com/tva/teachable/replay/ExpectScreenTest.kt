@@ -59,6 +59,11 @@ class ExpectScreenTest {
         // The tap opened the wrong dish: caught here rather than carried into the rest of the run.
         val r = run(listOf("Details", "Double Cheese Margherita"), "Farmhouse pizza")
         assertTrue(!r.success)
-        assertEquals("expected screen not reached", r.steps.last().error)
+        // A specific question, not "expected screen not reached": what was tapped, what was expected, what is there.
+        assertEquals(
+            "I tapped \"Details\", but the screen that opened doesn't mention \"Farmhouse pizza\". It shows \"Details\", \"Double Cheese Margherita\". Is this the wrong place?",
+            r.steps.last().error,
+        )
+        assertTrue("it is a question the run can ask", r.steps.last().cause != null)
     }
 }

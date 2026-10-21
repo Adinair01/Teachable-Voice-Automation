@@ -32,7 +32,7 @@ class BackendElementPicker(private val baseUrl: String) : ElementPicker {
     private fun post(body: JSONObject): Int? {
         val c = URL("$baseUrl/api/llm/pick-element").openConnection() as HttpURLConnection
         return try {
-            c.requestMethod = "POST"; c.connectTimeout = 5000; c.readTimeout = 15000; c.doOutput = true
+            c.requestMethod = "POST"; c.connectTimeout = 5000; c.readTimeout = 8000; c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.outputStream.use { it.write(body.toString().toByteArray()) }
             if (c.responseCode != 200) { Log.w(TAG, "pick-element http ${c.responseCode}"); return null }

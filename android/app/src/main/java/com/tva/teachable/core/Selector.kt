@@ -63,13 +63,22 @@ object SelectorMatcher {
             { sel.className.isNotEmpty() && sel.resourceId.isEmpty() && sel.text.isEmpty() && sel.contentDesc.isEmpty() && it.className == sel.className },
         )
         for ((tier, pred) in steps.withIndex()) {
-            val hits = nodes.filter(pred)
+            var hits = nodes.filter(pred)
+            // Apps reuse ids ("container", "positive_button") across unrelated controls, so an id match is only a match
+            // when the recorded caption agrees. Taking the id alone tapped "Replace" on a replace-cart dialog for a step
+            // taught on "Woohoo! Thanks", and the first of several "container"s for "1 item added". When the caption
+            // disagrees the id tier yields nothing, and the lookup goes on by caption (and in the end asks).
+            if (tier == ID_TIER) hits = byCaption(nodes, hits, sel)
             if (hits.isEmpty()) continue
-            // Apps reuse ids ("container") across many elements: the recorded caption picks the right one.
-            if (tier == ID_TIER && hits.size > 1) narrowByCaption(nodes, hits, sel)?.let { return it }
             return hits
         }
         return emptyList()
+    }
+
+    /** The id hits whose own caption (or a caption inside them) is the recorded one; all of them if none was recorded. */
+    private fun byCaption(nodes: List<UiNode>, hits: List<UiNode>, sel: Selector): List<UiNode> {
+        if (hits.isEmpty() || (sel.text.isBlank() && sel.contentDesc.isBlank())) return hits
+        return narrowByCaption(nodes, hits, sel).orEmpty()
     }
 
     /**
@@ -92,17 +101,37 @@ object SelectorMatcher {
         val parent by lazy { RowContext.parents(tree) }
         fun pick(hits: List<UiNode>): UiNode? =
             hits.firstOrNull()?.takeIf { !forTap || !blind(tree, parent, sel, hits) }
-        val byValue = { pool: List<UiNode> ->
-            if (slotValue.isNullOrEmpty()) emptyList() else findAll(pool, Selector(text = slotValue), textContains = true)
-        }
+        // A slot-bound control is the one whose caption holds the requested value with the fewest other words: the
+        // learned caption itself ("Search in {{restaurant}}" resolved), then the bare value.
+        val needles = if (slotValue.isNullOrEmpty()) emptyList() else listOf(sel.text, sel.contentDesc, slotValue).filter { it.isNotBlank() }.distinct()
         for (pool in pools) {
             val hits = findAll(pool, sel)
             if (hits.isNotEmpty()) {
                 pick(hits)?.let { return it }
                 // The selector cannot identify one control; only the slot value may still single one out.
-                return pick(byValue(pool))
+                return closest(pool, needles)
             }
-            if (forTap) pick(byValue(pool))?.let { return it }
+            if (forTap) closest(pool, needles)?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * The node whose caption contains a needle with the fewest extra words: "Pizza Hut" over "Pizza Hut Express",
+     * "Domino's Pizza" over "Search in Domino's Pizza". The same name in several places (a suggestion and a carousel)
+     * is the app repeating itself and the first is used; two DIFFERENT names equally close is a real ambiguity: null,
+     * so the caller asks. It used to take the first node merely containing the value, in tree order.
+     */
+    fun closest(pool: List<UiNode>, needles: List<String>): UiNode? {
+        for (needle in needles) {
+            val scored = pool.filter { !it.password }.mapNotNull { n ->
+                listOf(n.text, n.contentDesc).mapNotNull { c -> Captions.extraWords(c, needle)?.let { c to it } }.minByOrNull { it.second }
+                    ?.let { (c, extra) -> Triple(n, c, extra) }
+            }
+            if (scored.isEmpty()) continue
+            val best = scored.minOf { it.third }
+            val top = scored.filter { it.third == best }
+            return if (top.map { Captions.words(it.second) }.distinct().size == 1) top.first().first else null
         }
         return null
     }
@@ -168,7 +197,7 @@ object SelectorMatcher {
         return hits.filter { h ->
             val at = nodes.indexOf(h)
             val inside = listOf(h) + nodes.drop(at + 1).takeWhile { it.depth > h.depth }
-            caption.all { c -> inside.any { !it.password && (it.text.equals(c, true) || it.contentDesc.equals(c, true)) } }
+            caption.all { c -> inside.any { !it.password && (Captions.same(it.text, c) || Captions.same(it.contentDesc, c)) } }
         }.takeIf { it.isNotEmpty() }
     }
 
@@ -178,6 +207,7 @@ object SelectorMatcher {
         if (if (contains) actual.contains(wanted, true) else actual.equals(wanted, true)) return true
         val a = RowContext.norm(actual)
         val w = RowContext.norm(wanted)
-        return w.isNotEmpty() && if (contains) w in a else a == w
+        // An exact caption also matches once prices, counts and rotating placeholders are set aside on BOTH sides.
+        return w.isNotEmpty() && if (contains) w in a else a == w || Captions.same(actual, wanted)
     }
 }

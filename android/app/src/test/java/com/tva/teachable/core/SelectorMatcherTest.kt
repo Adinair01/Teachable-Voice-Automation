@@ -9,8 +9,15 @@ class SelectorMatcherTest {
         UiNode(i, 0, "p", id, text, desc, cls, "", click, false, false, pwd)
 
     @Test fun resourceIdBeatsText() {
-        val nodes = listOf(node(0, text = "Go"), node(1, id = "a:id/go", text = "Other"))
+        // Both "Go"s carry the caption; the one with the recorded id is the control.
+        val nodes = listOf(node(0, text = "Go"), node(1, id = "a:id/go", text = "Go"))
         assertEquals(1, SelectorMatcher.find(nodes, Selector(resourceId = "a:id/go", text = "Go"))?.index)
+    }
+
+    @Test fun anIdWhoseCaptionDisagreesIsNotTheControl() {
+        // Before: the id won whatever its caption said, which is how a step taught on "Woohoo! Thanks" tapped "Replace".
+        val nodes = listOf(node(0, text = "Go"), node(1, id = "a:id/go", text = "Other"))
+        assertEquals(0, SelectorMatcher.find(nodes, Selector(resourceId = "a:id/go", text = "Go"))?.index)
     }
 
     @Test fun textMatchIsCaseInsensitive() {

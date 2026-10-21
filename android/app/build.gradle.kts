@@ -32,4 +32,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("junit:junit:4.13.2")
+    // The real org.json (Android's is a stub in unit tests), so tests parse flows with the phone's own FlowJson.
+    testImplementation("org.json:json:20240303")
 }

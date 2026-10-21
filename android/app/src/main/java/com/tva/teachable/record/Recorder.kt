@@ -4,7 +4,9 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.tva.teachable.BuildConfig
 import android.view.accessibility.AccessibilityNodeInfo
+import com.tva.teachable.core.Captions
 import com.tva.teachable.core.Expect
+import com.tva.teachable.core.Interruptions
 import com.tva.teachable.a11y.UiTreeReader
 import com.tva.teachable.core.FlowStep
 import com.tva.teachable.core.RowContext
@@ -21,6 +23,8 @@ import com.tva.teachable.core.StepType
  * Pure event->step logic; the service only forwards events.
  */
 private val IME = Regex("inputmethod|\\.ime$|keyboard", RegexOption.IGNORE_CASE)
+// Screens that interrupt a demonstration rather than belong to it: an incoming call, the dialer.
+private val INTERRUPTING_APP = Regex("incallui|\\.dialer|\\.telecom|\\.phone$", RegexOption.IGNORE_CASE)
 private const val MAX_CAPTIONS = 15
 
 class Recorder(private val ownPackage: String, private val ignoredPackages: Set<String> = setOf("com.android.systemui")) {
@@ -30,14 +34,30 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
     /** Taps come from the TouchCatcher (onUserTap) instead of TYPE_VIEW_CLICKED, which would double-record them. */
     @Volatile var touchMode = false
 
-    fun start() { steps.clear(); pendingType = null; launched = false }
+    fun start() { steps.clear(); pendingType = null; launched = false; undoable = -1 }
+
+    /** Index of the tap a Back press would undo: the last step, while nothing has been recorded after it. */
+    private var undoable = -1
+
+    /**
+     * The user pressed Back. Straight after a tap, with nothing recorded since, that is "not that one": the tap
+     * opened something they did not mean to (a dish's details, an offer) and they backed out of it. Replaying it
+     * would open the same detour every run, so it is removed. Back after typing only closes the keyboard and
+     * removes nothing; Back after anything else is not an undo either.
+     */
+    @Synchronized fun onBack() {
+        if (pendingType != null || undoable < 0 || undoable != steps.lastIndex || steps[undoable].type != StepType.TAP) { undoable = -1; return }
+        val dropped = steps.removeAt(undoable)
+        undoable = -1
+        Log.i("TVA", "recorder: Back right after tapping ${dropped.selector.text.ifBlank { dropped.selector.contentDesc }.take(40)} - dropped that tap")
+    }
 
     @Synchronized fun stop(): List<FlowStep> { flushType(); return steps.toList() }
 
     @Synchronized fun onEvent(e: AccessibilityEvent) {
         val pkg = e.packageName?.toString().orEmpty()
         if (BuildConfig.DEBUG) Log.d("TVA", "rec event ${AccessibilityEvent.eventTypeToString(e.eventType)} pkg=$pkg src=${e.source != null} text=${e.text}")
-        if (pkg.isEmpty() || pkg == ownPackage || pkg in ignoredPackages || IME.containsMatchIn(pkg)) return
+        if (ignored(pkg)) return
         // The demo's launch step is the first real app the user touches (launcher taps are ignored by design).
         if (!launched) { steps += FlowStep(StepType.LAUNCH, value = pkg); launched = true }
         when (e.eventType) {
@@ -70,31 +90,48 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         )
         val me = src?.let { UiTreeReader.toUiNode(it) }
         val node = me?.let { m -> screen.firstOrNull { it.bounds == m.bounds && it.resourceId == m.resourceId && it.className == m.className } }
-        if (!sel.isEmpty) steps += FlowStep(
-            StepType.TAP, sel,
-            context = node?.let { rowContext(screen, it, sel) }.orEmpty(),
-            candidates = node?.let { sameKindCount(screen, sel) } ?: 0,
-        )
+        addTap(sel, context = node?.let { rowContext(screen, it, sel) }.orEmpty(), candidates = node?.let { sameKindCount(screen, sel) } ?: 0)
+    }
+
+    private fun ignored(pkg: String) =
+        pkg.isEmpty() || pkg == ownPackage || pkg in ignoredPackages || IME.containsMatchIn(pkg) || INTERRUPTING_APP.containsMatchIn(pkg)
+
+    /**
+     * Records a tap with only what lasts in its selector — no price, item count or rotating placeholder ("Add item
+     * ₹279" is stored as "Add item") — and never a tap that only dealt with an interruption: closing a popup, or a
+     * coupon or offer the demo wandered into ("APPLY", "Woohoo! Thanks", "Offers for you"). Those are not the task; on
+     * replay the dismissal ones are cleared by the replayer if they show up, and an offer is simply not taken.
+     */
+    private fun addTap(raw: Selector, context: List<String>, candidates: Int) {
+        val caption = raw.text.ifBlank { raw.contentDesc }
+        if (Interruptions.isInterruption(caption)) {
+            Log.i("TVA", "recorder: \"${caption.take(40)}\" only dealt with an interruption - not a step")
+            return
+        }
+        val sel = raw.copy(text = Captions.durable(raw.text), contentDesc = Captions.durable(raw.contentDesc))
+        if (sel.isEmpty) return
+        steps += FlowStep(StepType.TAP, sel, context = context, candidates = candidates)
+        undoable = steps.lastIndex
     }
 
     /** A finger tap seen by the TouchCatcher at (x, y); [screen] was read before the tap reached the app. */
     @Synchronized fun onUserTap(screen: List<UiNode>, x: Int, y: Int) {
         val pkg = screen.firstOrNull()?.packageName.orEmpty()
-        if (pkg.isEmpty() || pkg == ownPackage || pkg in ignoredPackages || IME.containsMatchIn(pkg)) return
+        if (ignored(pkg)) return
         if (onBoundary(screen)) { pendingType = null; return }
         if (!launched) { steps += FlowStep(StepType.LAUNCH, value = pkg); launched = true }
         val node = TapTarget.at(screen, x, y) ?: return
         flushType()
         if (node.editable) return // focusing a field: the typed text becomes the step
         val sel = TapTarget.selector(screen, node)
-        if (!sel.isEmpty) steps += FlowStep(StepType.TAP, sel, context = rowContext(screen, node, sel), candidates = sameKindCount(screen, sel))
+        if (!sel.isEmpty) addTap(sel, context = rowContext(screen, node, sel), candidates = sameKindCount(screen, sel))
     }
 
     /** An upward swipe while teaching: replay scrolls the page forward at this point too. */
     @Synchronized fun onSwipeUp() {
         if (!launched) return
         flushType()
-        if (steps.lastOrNull()?.type != StepType.SCROLL) steps += FlowStep(StepType.SCROLL)
+        if (steps.lastOrNull()?.type != StepType.SCROLL) { steps += FlowStep(StepType.SCROLL); undoable = -1 }
     }
 
     private fun sameKind(sel: Selector): (UiNode) -> Boolean = { n ->
@@ -144,7 +181,7 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         return true
     }
 
-    private fun flushType() { pendingType?.let { steps += it }; pendingType = null }
+    private fun flushType() { pendingType?.let { steps += it; undoable = -1 }; pendingType = null }
 
     /** Stable selector: id + text (own or first labelled descendant) + desc + class. */
     private fun selectorOf(n: AccessibilityNodeInfo): Selector = Selector(

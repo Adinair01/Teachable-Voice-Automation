@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Rect
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.tva.teachable.BuildConfig
@@ -48,6 +49,12 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) { recorder?.onEvent(event) }
+
+    /** While teaching, Back is observed (never consumed): right after a tap it undoes that tap (see Recorder.onBack). */
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) recorder?.let { r -> scope.launch(recordLane) { r.onBack() } }
+        return false
+    }
     override fun onInterrupt() {}
 
     override fun onDestroy() {

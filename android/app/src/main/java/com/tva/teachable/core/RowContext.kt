@@ -59,18 +59,38 @@ object RowContext {
     fun pick(nodes: List<UiNode>, candidates: List<UiNode>, near: String, fallback: String?, sameKind: (UiNode) -> Boolean): UiNode? {
         if (candidates.isEmpty()) return null
         val parent = parents(nodes)
-        val rows = candidates.map { it to of(nodes, it, sameKind, parent).map(::norm) }
+        val raw = candidates.map { it to of(nodes, it, sameKind, parent) }
         val n = norm(near)
-        if (n.isNotEmpty()) rows.firstOrNull { (_, texts) -> n in texts }?.let { return it.first }
+        if (n.isNotEmpty()) raw.firstOrNull { (_, texts) -> texts.any { norm(it) == n } }?.let { return it.first }
         // The item itself is on screen but its row has no such control (a dish already in the cart shows a stepper
         // instead of ADD): a neighbour that merely contains the words ("Double Cheese Margherita Pizza") is a different dish.
         if (n.isNotEmpty() && nodes.any { !it.editable && !it.password && (norm(it.text) == n || norm(it.contentDesc) == n) }) return null
         // The bare slot value, then its longest word: "Margherita pizzas" (spoken plural) still finds "Margherita Pizza".
         val word = fallback.orEmpty().split(Regex("\\s+")).maxByOrNull { it.length }.orEmpty()
-        for (f in listOf(norm(fallback.orEmpty()), norm(word).takeIf { it.length >= 4 }.orEmpty()).distinct()) {
-            if (f.isNotEmpty()) rows.firstOrNull { (_, texts) -> texts.any { f in it } }?.let { return it.first }
+        for (f in listOf(fallback.orEmpty(), word.takeIf { norm(it).length >= 4 }.orEmpty()).filter { norm(it).isNotEmpty() }.distinct()) {
+            closestRow(raw, f)?.let { return it.getOrNull() }
         }
         return null
+    }
+
+    /**
+     * Among rows that mention [needle], the one whose caption is closest to being exactly it (fewest extra words):
+     * "Margherita Pizza" beats "Double Cheese Margherita Pizza" for "margherita" in EITHER list order — tree order
+     * used to decide. null = no row mentions it; Result(null) = two different names equally close: ask, don't guess.
+     * The same name twice (one dish listed in two menu sections) is one dish, and the first is used.
+     */
+    private fun closestRow(rows: List<Pair<UiNode, List<String>>>, needle: String): Result<UiNode?>? {
+        val f = norm(needle)
+        val scored = rows.mapNotNull { (node, texts) ->
+            texts.mapNotNull { t ->
+                (Captions.extraWords(t, needle) ?: if (f in norm(t)) maxOf(0, Captions.words(t).size - Captions.words(needle).size) else null)
+                    ?.let { t to it }
+            }.minByOrNull { it.second }?.let { (t, extra) -> Triple(node, t, extra) }
+        }
+        if (scored.isEmpty()) return null
+        val best = scored.minOf { it.third }
+        val top = scored.filter { it.third == best }
+        return Result.success(if (top.map { norm(it.second) }.distinct().size == 1) top.first().first else null)
     }
 
     /**
