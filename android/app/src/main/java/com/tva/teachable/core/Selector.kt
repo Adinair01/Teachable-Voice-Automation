@@ -14,6 +14,14 @@ data class UiNode(
     val editable: Boolean,
     val scrollable: Boolean,
     val password: Boolean,
+    /**
+     * Where this node is drawn among its siblings (Android's drawing order, which accounts for elevation): a higher
+     * one is painted over a lower one. Apps like Zomato keep the previous page in the tree under the new one, and
+     * this is how the page on top is told apart.
+     */
+    val drawingOrder: Int = 0,
+    /** Android's own "visible to the user" flag: false for nodes scrolled or clipped out of view. */
+    val visibleToUser: Boolean = true,
 )
 
 /** Screen area from the flattened bounds "left top right bottom"; 0 when unknown. */

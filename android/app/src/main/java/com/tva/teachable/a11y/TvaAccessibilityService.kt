@@ -197,7 +197,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
             arr.put(JSONObject().put("i", it.index).put("d", it.depth).put("pkg", it.packageName)
                 .put("id", it.resourceId).put("text", it.text).put("desc", it.contentDesc)
                 .put("cls", it.className).put("b", it.bounds).put("click", it.clickable)
-                .put("edit", it.editable).put("scroll", it.scrollable))
+                .put("edit", it.editable).put("scroll", it.scrollable).put("z", it.drawingOrder).put("vis", it.visibleToUser))
         }
         File(filesDir, "dump.json").writeText(arr.toString())
         return "nodes=${nodes.size} pkg=${nodes.firstOrNull()?.packageName}"

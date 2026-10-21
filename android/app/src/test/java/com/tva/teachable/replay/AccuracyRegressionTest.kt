@@ -243,15 +243,25 @@ class AccuracyRegressionTest {
 
     // ---- answers to a question, as given in the live session of 2026-10-21 ----
 
-    /** The cart, with Zomato's previous page (the menu) still in the tree BEFORE it, as the app really does. */
+    /**
+     * The cart as Zomato really builds it (live dump of 2026-10-21): ONE window holding the menu page (drawn at 4), the
+     * menu's bottom bar "2 items added | Continue" (9), a full-screen tappable backdrop (13) and the cart page (15) —
+     * the cart is not at either end of the tree.
+     */
     private inner class Cart : Device {
         val tapped = ArrayList<String>()
         var picker = false
         override fun tree(): LiveTree {
-            val menu = listOf(row(1, text = "Unlock Flat ₹125 OFF"), row(1, text = "Cheese Volcano Farmhouse"), row(1, desc = "ADD", click = true))
-            val page = if (!picker) listOf(row(1, text = "Bill details"), listOf(1, "", "Select address at next step", "", true))
-                else listOf(row(1, text = "Select an address"), row(1, text = "Home", click = true), row(1, text = "Work", click = true))
-            return LiveTree(tree(row(0), *menu.toTypedArray(), *page.toTypedArray()).map { it.copy(bounds = "0 ${it.index * 100} 1000 ${it.index * 100 + 90}") }, emptyList())
+            val full = "0 0 1080 2412"
+            fun n(depth: Int, text: String = "", desc: String = "", click: Boolean = false, b: String = full, z: Int = 1) =
+                UiNode(0, depth, z.toString(), "", text, desc, "", b, click, false, false, false, z)
+            val menu = listOf(n(1, z = 4), n(2, "Unlock Flat ₹125 OFF", b = "0 300 1080 400"), n(2, "Cheese Volcano Farmhouse", b = "0 400 1080 500"), n(2, desc = "ADD", click = true, b = "800 400 1000 500"))
+            val bar = listOf(n(1, z = 9), n(2, "2 items added", b = "0 2255 700 2317"), n(2, "Continue", click = true, b = "700 2255 1000 2317"))
+            val backdrop = listOf(n(1, click = true, z = 13))
+            val page = listOf(n(1, z = 15)) + if (!picker) listOf(n(2, "Bill details", b = "0 300 1080 400"), n(2, "Select address at next step", click = true, b = "0 2258 1080 2334"))
+                else listOf(n(2, "Select an address", b = "0 300 1080 400"), n(2, "Home", click = true, b = "0 400 1080 500"), n(2, "Work", click = true, b = "0 500 1080 600"))
+            val all = listOf(n(0)) + menu + bar + backdrop + page
+            return LiveTree(all.mapIndexed { i, x -> x.copy(index = i, packageName = z) }, emptyList())
         }
         override fun tap(tree: LiveTree, node: UiNode): Boolean {
             val c = node.text.ifBlank { node.contentDesc }; tapped += c
@@ -288,7 +298,8 @@ class AccuracyRegressionTest {
     @Test fun `the question describes the page on top, not the menu under the cart`() {
         val (_, questions) = answered("stop")
         // Before: "This screen shows "Unlock Flat ₹125 OFF", "ADD", "₹355", "Cheese Volcano Farmhouse"" on the cart.
-        assertTrue(questions.first(), questions.first().contains("This screen shows \"Select address at next step\""))
+        assertTrue(questions.first(), questions.first().contains("\"Select address at next step\""))
+        assertTrue("the menu under the cart is not described: ${questions.first()}", !questions.first().contains("Unlock Flat") && !questions.first().contains("Continue"))
     }
 
     @Test fun `at the cart, a leftover demo step (the old flow's coupon APPLY) is skipped, not asked about`() {
@@ -312,5 +323,31 @@ class AccuracyRegressionTest {
         assertEquals(1, questions.size)
         assertTrue(r.success)
         assertTrue(r.finishedByUser)
+    }
+
+    @Test fun `the real Zomato cart screen - only the cart is seen, and the description names its own bottom action`() {
+        // Live dump (2026-10-21) of the cart over the menu, with Android's drawing order.
+        val arr = org.json.JSONArray(javaClass.getResource("/screens/zomato_cart_over_menu.json")!!.readText())
+        val nodes = (0 until arr.length()).map { k -> arr.getJSONObject(k).let { o ->
+            UiNode(o.getInt("i"), o.getInt("d"), o.getString("pkg"), o.getString("id"), o.getString("text"), o.getString("desc"), o.getString("cls"),
+                o.getString("b"), o.getBoolean("click"), o.getBoolean("edit"), o.getBoolean("scroll"), false, o.getInt("z"), o.getBoolean("vis"))
+        } }
+        val seen = com.tva.teachable.core.Visibility.visible(nodes).map { it.text.ifBlank { it.contentDesc }.trim() }.filter { it.isNotEmpty() }
+        assertTrue(seen.toString(), "Farmhouse Pizza" in seen && "Margherita Pizza" in seen && "Select address at next step" in seen)
+        assertTrue("the menu's bar under the cart: $seen", "2 items added" !in seen && "Continue" !in seen)
+        assertTrue("the menu list under the cart: $seen", seen.none { it.startsWith("Flat ₹250 OFF") || it == "Most ordered together" })
+        val summary = com.tva.teachable.core.ScreenSummary.of(nodes)
+        println("cart summary: $summary")
+        assertTrue(summary, summary.contains("\"Select address at next step\""))
+        assertTrue(summary, !summary.contains("Continue") && !summary.contains("Unlock Flat"))
+    }
+
+    @Test fun `an empty full-screen container or a floating button drawn on top hides nothing`() {
+        fun n(i: Int, d: Int, text: String = "", click: Boolean = false, b: String = "0 0 1080 2400", z: Int = 1) =
+            UiNode(i, d, z.toString(), "", text, "", "", b, click, false, false, false, z)
+        val nodes = listOf(n(0, 0), n(1, 1, z = 1), n(2, 2, "Margherita Pizza", click = true, b = "0 300 1080 400"),
+            n(3, 1, z = 9),                                                  // an empty full-screen overlay container
+            n(4, 1, z = 12), n(5, 2, "Menu", click = true, b = "800 2000 1040 2120")) // a floating button's container
+        assertTrue(com.tva.teachable.core.Visibility.visible(nodes).any { it.text == "Margherita Pizza" })
     }
 }

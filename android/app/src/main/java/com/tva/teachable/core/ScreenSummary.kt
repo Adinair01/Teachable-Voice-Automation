@@ -10,21 +10,30 @@ object ScreenSummary {
     private const val MAX_LABEL = 28
 
     /**
-     * Labels from the page the user is LOOKING at. Apps like Zomato keep the previous page in the accessibility tree
-     * and add the new one after it, so reading from the top described the page underneath (seen live: the menu's
-     * dishes were read out while the cart was on screen). Read from the end, tappable controls first: what the user
-     * can see and could name in an answer.
+     * Labels from the page the user is LOOKING at, in reading order: pages the app keeps underneath (Zomato's menu
+     * under its cart) are left out by drawing order (see Visibility), and the main action at the bottom of the screen
+     * ("Select address at next step") is always named, since it is what the user is most likely to answer with.
      */
     fun of(nodes: List<UiNode>, max: Int = 4): String {
-        val tappable = SelectorMatcher.tappable(nodes).toSet()
-        val labels = nodes.asReversed().sortedBy { if (it in tappable) 0 else 1 }.asSequence()
+        val seen = Visibility.visible(nodes)
+        val tappable = SelectorMatcher.tappable(nodes).map { it.index }.toSet()
+        // The main action is a WIDE control (half the screen or more): a small tag lower down ("ADDED") is not it.
+        val width = nodes.maxOfOrNull { box(it).let { b -> b[2] - b[0] } } ?: 0
+        val bottomAction = seen.filter { it.index in tappable && it.text.ifBlank { it.contentDesc }.isNotBlank() }
+            .map { it to box(it) }.filter { (_, b) -> b[3] > b[1] && (b[2] - b[0]) * 2 >= width }
+            .maxByOrNull { (_, b) -> b[3] }?.first
+        val labels = (seen.asSequence() + listOfNotNull(bottomAction).asSequence())
             .filter { !it.password && !it.editable }
             .flatMap { sequenceOf(it.text, it.contentDesc) }
             .map { it.trim() }
             .filter { it.length in 2..MAX_LABEL && !DIGIT_RUN.containsMatchIn(it) }
             .distinctBy { it.lowercase() }
-            .take(max)
             .toList()
+            .let { all -> all.take(max) + all.drop(max).filter { it == label(bottomAction) } }
         return if (labels.isEmpty()) "nothing I can read" else labels.joinToString(", ") { "\"$it\"" }
     }
+
+    private fun box(n: UiNode) = n.bounds.split(' ').mapNotNull { it.toIntOrNull() }.takeIf { it.size == 4 } ?: listOf(0, 0, 0, 0)
+
+    private fun label(n: UiNode?) = n?.let { it.text.ifBlank { it.contentDesc }.trim() }
 }

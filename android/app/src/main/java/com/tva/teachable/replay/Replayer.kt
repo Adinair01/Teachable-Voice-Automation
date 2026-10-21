@@ -24,6 +24,7 @@ import com.tva.teachable.core.StuckCause
 import com.tva.teachable.core.TapTarget
 import com.tva.teachable.core.Steppers
 import com.tva.teachable.core.UiNode
+import com.tva.teachable.core.Visibility
 import com.tva.teachable.core.resolveSlots
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -745,10 +746,14 @@ class Replayer(
      * position ("the bottom button": the lowest captioned control).
      */
     private fun answerTarget(nodes: List<UiNode>, caption: String, spoken: String = caption): UiNode? {
+        // Only what the user can SEE: a control on a page kept underneath (the menu's "Continue" under the cart) is not
+        // what they are naming, however well its caption matches.
+        val hidden = Visibility.hidden(nodes)
+        val tappable = SelectorMatcher.tappable(nodes).filter { !hidden[it.index] && !it.password && it.text.ifBlank { it.contentDesc }.isNotBlank() }
         for (c in listOf(caption, spoken).distinct()) {
-            SelectorMatcher.target(nodes, Selector(text = c, contentDesc = c), null, forTap = true)?.let { return it }
+            SelectorMatcher.target(nodes, Selector(text = c, contentDesc = c), null, forTap = true)?.takeIf { !hidden[it.index] }?.let { return it }
+            tappable.firstOrNull { Captions.same(it.text, c) || Captions.same(it.contentDesc, c) }?.let { return it }
         }
-        val tappable = SelectorMatcher.tappable(nodes).filter { !it.password && it.text.ifBlank { it.contentDesc }.isNotBlank() }
         val want = RowContext.norm(caption)
         if (want.length >= 3) tappable.filter { n -> listOf(n.text, n.contentDesc).any { RowContext.norm(it).let { c -> c.isNotEmpty() && want in c } } }.singleOrNull()?.let { return it }
         val said = Captions.words(spoken).toSet()

@@ -42,6 +42,7 @@ object UiTreeReader {
             bounds = r.flattenToString(),
             clickable = n.isClickable, editable = n.isEditable,
             scrollable = n.isScrollable, password = pwd,
+            drawingOrder = n.drawingOrder, visibleToUser = n.isVisibleToUser,
         )
     }
 
