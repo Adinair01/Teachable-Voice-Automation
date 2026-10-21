@@ -1,6 +1,6 @@
 # Teachable Voice Automation
 
-**Samsung PRISM Gen AI Hackathon — Theme 3.** An Android assistant that learns to operate **any** app by watching you
+**Samsung PRISM Gen AI Hackathon - Theme 3.** An Android assistant that learns to operate **any** app by watching you
 do the task once, then repeats it by voice with new values.
 
 > You: *"order me a burger"* → nothing learned yet → the phone says **"Do whatever you want to do on the screen so I
