@@ -10,7 +10,7 @@ const FATAL = (status) => status === 401 || status === 403;
 const retryAfterMs = (res) => Math.min(10000, (Number(res.headers?.get?.('retry-after')) || 2) * 1000);
 
 // How long a rate-limited model is passed over: its own Retry-After, within sane bounds. A 429 on the GPT model sends
-// every later call straight to the next model (Qwen) until then, instead of paying a refused round trip each time.
+// every later call straight to the next model (gpt-oss-120b) until then, instead of paying a refused round trip each time.
 const COOL_MIN_MS = 2000;
 const COOL_MAX_MS = 60000;
 const coolUntil = new Map();
@@ -79,7 +79,7 @@ async function attempt({ model, system, user, schema, timeoutMs, fetchImpl, vali
  * One Groq JSON-mode call, validated against a zod schema. Every LLM feature goes through here so the model
  * ladder, timeouts and output validation live in one place. LLM output is untrusted data.
  *
- * Models are tried in order (config.GROQ_MODEL_CHAIN: gpt-oss -> qwen -> gpt-oss-120b). A model that is rate
+ * Models are tried in order (config.GROQ_MODEL_CHAIN: gpt-oss-20b -> gpt-oss-120b). A model that is rate
  * limited, down, decommissioned, or that answers with something unusable hands the question to the next one
  * immediately — no waiting while another model is free. A rate-limited model is then passed over for its
  * Retry-After window (see ordered()), so the next call goes straight to a free one. Waiting out Retry-After and

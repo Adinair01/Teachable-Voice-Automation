@@ -260,10 +260,11 @@ a per-app script. A judge can teach a brand-new flow on any of these — or anot
   …) record correctly.
 - Long-press, drag and pinch are not recorded — taps, typing, scrolling and back are.
 - The Groq account used here no longer serves Llama 3.x, so `GROQ_MODEL` defaults to `openai/gpt-oss-20b`
-  (any JSON-mode model works). The free tier throttles bursts, so every LLM call walks a **model ladder**
-  (`GROQ_MODEL` then `GROQ_FALLBACK_MODELS`, default `qwen/qwen3.8-27b,openai/gpt-oss-120b`): a model that is rate
-  limited, down, decommissioned or that answers unusably hands the question to the next one immediately, across two
-  vendors so one vendor's quota cannot stall a run. Only an exhausted ladder waits out `Retry-After` and retries once.
+  (any JSON-mode model works). Every LLM call walks a short **model ladder** (`GROQ_MODEL` then `GROQ_FALLBACK_MODELS`,
+  default `openai/gpt-oss-120b`, GPT models only): a model that is rate limited, down, times out (5 s) or answers
+  unusably hands the question to the next one immediately, and a rate-limited model is skipped until its `Retry-After`
+  ends. A live session never waits out a rate limit; if every model fails the user hears that the service is busy.
+  `tools/groq-watch.sh` shows rate limits and model switches as they happen.
 - A slot the demonstration never used (e.g. "plus" in *calculate 5 plus 3*) is stored but cannot vary the replay.
 - One phone, one backend: the session state lives on the socket, so a reconnect cancels a half-finished teach session.
 - **On-device screen recording is blocked** on the Realme test device (`screenrecord` fails with permission denied on

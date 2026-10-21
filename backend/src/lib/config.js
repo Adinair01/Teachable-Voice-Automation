@@ -7,9 +7,9 @@ const schema = z.object({
   DEEPGRAM_API_KEY: z.string().default(''),
   GROQ_API_KEY: z.string().default(''),
   GROQ_MODEL: z.string().default('openai/gpt-oss-20b'),
-  // Tried in order after GROQ_MODEL when it is rate limited, down or answers with something unusable.
-  // Different vendors on purpose: Qwen's quota and failure modes are independent of the GPT models'.
-  GROQ_FALLBACK_MODELS: z.string().default('qwen/qwen3.8-27b,openai/gpt-oss-120b'),
+  // Tried in order after GROQ_MODEL when it errors, times out or answers with something unusable. GPT models only
+  // (2026-10-22, Groq developer plan): the larger GPT-OSS is the backup for the smaller one.
+  GROQ_FALLBACK_MODELS: z.string().default('openai/gpt-oss-120b'),
   LOG_LEVEL: z.string().default('info'),
 });
 

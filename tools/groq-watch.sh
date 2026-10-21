@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Usage: tools/groq-watch.sh            follow live: every Groq rate limit, model switch and failure, in words
 #        tools/groq-watch.sh --since 1h show what already happened in the last hour (any docker "since" value), then stop
-# A 429 from a model is a rate limit: the backend switches to the next model at once (gpt-oss-20b -> qwen -> gpt-oss-120b)
+# A 429 from a model is a rate limit: the backend switches to the next model at once (gpt-oss-20b -> gpt-oss-120b)
 # and passes over the limited one until its Retry-After ends. Only "ALL MODELS FAILED" reaches the user, as a spoken
 # "Sorry, my language service is busy right now".
 set -u
