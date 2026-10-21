@@ -52,6 +52,9 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
     private var startX = 0
     private var startY = 0
     private var dragging = false
+    /** The last gesture was a drag (so its release is not also a tap). */
+    private var moved = false
+    private var teaching = false
     // mic gesture state
     private var holding = false
     private var lastTapAt = 0L
@@ -70,7 +73,8 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
         }
         val done = Button(service).apply {
             text = "Done teaching"; isAllCaps = false; visibility = View.GONE
-            setOnClickListener { VoiceService.instance?.finishTeaching() }
+            // In teach mode this button is most of the panel: a drag on it moves the panel, a tap still means Done.
+            setOnTouchListener { _, e -> onDragOrTap(e) { VoiceService.instance?.finishTeaching() } }
         }
         val yes = Button(service).apply { text = "Yes"; isAllCaps = false; setOnClickListener { VoiceService.instance?.answerConfirm(true) } }
         val no = Button(service).apply { text = "No"; isAllCaps = false; setOnClickListener { VoiceService.instance?.answerConfirm(false) } }
@@ -82,6 +86,7 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
             orientation = LinearLayout.VERTICAL; setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
             background = panelBg
             addView(status); addView(mic); addView(done); addView(confirmRow)
+            setOnTouchListener { _, e -> onDragOnly(e) } // the panel's own background is a handle too
         }
         lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -113,8 +118,10 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
                     renderMic(mic, l as ListenMode, teaching)
                     // While teaching the panel shrinks to a label + Done and parks on the left edge, mid-screen: apps
                     // put their search, ADD and cart controls along the top, right and bottom, and a demo tap that
-                    // lands on the panel never reaches the app (or the Recorder). Restore the user's spot after.
-                    if (teaching && !wasTeaching) move(0, (screen().second * 0.55f).toInt())
+                    // lands on the panel never reaches the app (or the Recorder). It can be dragged out of the way
+                    // there too; teach mode remembers its own spot, and the user's normal spot comes back after.
+                    this@Overlay.teaching = teaching
+                    if (teaching && !wasTeaching) move(prefs.getInt(KEY_TEACH_X, 0), prefs.getInt(KEY_TEACH_Y, (screen().second * 0.55f).toInt()))
                     else if (!teaching && wasTeaching) move(prefs.getInt(KEY_X, screen().first), prefs.getInt(KEY_Y, (screen().second * 0.62f).toInt()))
                     wasTeaching = teaching
                 }
@@ -165,6 +172,13 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
 
     // ---- dragging ----
 
+    /** A control that is also a drag handle: moving past the touch slop drags the panel, a plain tap runs [onTap]. */
+    private fun onDragOrTap(e: MotionEvent, onTap: () -> Unit): Boolean {
+        onDragOnly(e)
+        if (e.actionMasked == MotionEvent.ACTION_UP && !moved) onTap()
+        return true
+    }
+
     private fun onDragOnly(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> beginDrag(e)
@@ -178,16 +192,16 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
     }
 
     private fun beginDrag(e: MotionEvent) {
-        downRawX = e.rawX; downRawY = e.rawY; startX = lp.x; startY = lp.y; dragging = false
+        downRawX = e.rawX; downRawY = e.rawY; startX = lp.x; startY = lp.y; dragging = false; moved = false
     }
 
-    private fun endDrag() { dragging = false; snap(persist = true) }
+    private fun endDrag() { dragging = false; moved = true; snap(persist = true) }
 
     /** Snaps to whichever side edge is closer — a bubble parked mid-screen would cover the app under test. */
     private fun snap(persist: Boolean) {
         val w = screen().first
         move(if (lp.x + root.width / 2 < w / 2) 0 else w - root.width, lp.y)
-        if (persist) prefs.edit().putInt(KEY_X, lp.x).putInt(KEY_Y, lp.y).apply()
+        if (persist) prefs.edit().putInt(if (teaching) KEY_TEACH_X else KEY_X, lp.x).putInt(if (teaching) KEY_TEACH_Y else KEY_Y, lp.y).apply()
     }
 
     private fun move(x: Int, y: Int) {
@@ -223,6 +237,8 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
         const val PREFS = "tva_overlay"
         const val KEY_X = "x"
         const val KEY_Y = "y"
+        const val KEY_TEACH_X = "teach_x"
+        const val KEY_TEACH_Y = "teach_y"
         const val HOLD_MS = 220L
         const val DOUBLE_TAP_MS = 450L
         const val PULSE_MS = 700L

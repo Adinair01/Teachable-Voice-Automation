@@ -180,6 +180,7 @@ class VoiceService : Service() {
     }
 
     private fun finishTeachingNow() {
+        if (BuildConfig.DEBUG) Log.d("TVA", "teach: finishing")
         val ctx = teach ?: return
         val steps = TvaAccessibilityService.instance?.stopRecording().orEmpty()
         teach = null; AppState.teaching.value = false; AppState.status.value = "Saving…"
