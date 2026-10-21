@@ -101,7 +101,9 @@ object ScreenGuard {
      * touch a payment screen, and they are unchanged.
      */
     fun readyToPay(nodes: List<UiNode>): Boundary? {
-        val texts = nodes.filter { !it.editable }.map(::visible).filter { it.isNotBlank() }
+        // What the user can see: a cart kept in the tree under the menu is not "being at the cart". (The safety checks,
+        // [screen] and [action], deliberately keep looking at everything, hidden or not.)
+        val texts = Visibility.visible(nodes).filter { !it.editable }.map(::visible).filter { it.isNotBlank() }
         if (texts.none { CHECKOUT_EVIDENCE.containsMatchIn(it) }) return null
         val commit = texts.firstOrNull { actionText(it) != null }
         return Boundary(BoundaryKind.PAYMENT, commit?.let { "ready to pay: \"${it.take(40)}\"" } ?: "order ready for review")

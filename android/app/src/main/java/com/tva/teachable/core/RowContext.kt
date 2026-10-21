@@ -125,8 +125,10 @@ object Steppers {
 
     fun all(nodes: List<UiNode>): List<Stepper> {
         val parent = RowContext.parents(nodes)
-        // Zomato's menu stepper keeps its count in contentDesc; its cart stepper keeps it in text.
-        return nodes.filter { !it.editable && NUMBER.matches(count(it)) }.mapNotNull { n ->
+        val hidden = Visibility.hidden(nodes)
+        // Zomato's menu stepper keeps its count in contentDesc; its cart stepper keeps it in text. The menu's steppers
+        // under an open cart are hidden, so the cart's own are the ones used.
+        return nodes.filter { !hidden[it.index] && !it.editable && NUMBER.matches(count(it)) }.mapNotNull { n ->
             val siblings = nodes.filter { parent[it.index] == parent[n.index] && parent[n.index] >= 0 }
             val at = siblings.indexOf(n)
             val minus = siblings.getOrNull(at - 1)?.takeIf { it.clickable }

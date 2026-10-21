@@ -184,8 +184,10 @@ object SelectorMatcher {
      */
     fun target(nodes: List<UiNode>, sel: Selector, slotValue: String?, forTap: Boolean): UiNode? {
         // A tap needs something clickable at or above the node: a caption echoed in a plain label (the search box
-        // repeating "Domino's pizza") would otherwise be "tapped" to no effect.
-        val pool = if (forTap) tappable(nodes) else nodes
+        // repeating "Domino's pizza") would otherwise be "tapped" to no effect. And only what the user can SEE: a page
+        // the app keeps underneath (Zomato's menu under its cart, with its own "Continue") is never a target.
+        val hidden = Visibility.hidden(nodes)
+        val pool = (if (forTap) tappable(nodes) else nodes).filter { !hidden[it.index] }
         if (sel.near.isEmpty()) return findTarget(pool, sel, slotValue, forTap, tree = nodes)
         val same = findAll(pool, sel.copy(near = "")).toSet()
         return RowContext.pick(nodes, same.toList(), sel.near, slotValue) { it in same }

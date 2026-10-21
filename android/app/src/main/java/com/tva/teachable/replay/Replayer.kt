@@ -476,8 +476,9 @@ class Replayer(
         if (blocksAutoDismissal(t.nodes)) return false
         // Of several candidates, one that only CLOSES is preferred to one that moves on; either is cleared by the guards
         // first, so which one comes first in the tree can no longer matter for safety.
+        val hidden = Visibility.hidden(t.nodes)
         val node = t.nodes.filter { n ->
-            n.clickable && allowed.matches((n.text.ifBlank { n.contentDesc }).trim()) && ScreenGuard.action(t.nodes, n) == null && destroys(t, n, null) == null
+            !hidden[n.index] && n.clickable && allowed.matches((n.text.ifBlank { n.contentDesc }).trim()) && ScreenGuard.action(t.nodes, n) == null && destroys(t, n, null) == null
         }.minByOrNull { if (Interruptions.isDismissal(it.text.ifBlank { it.contentDesc })) 0 else 1 } ?: return false
         val before = signature(t)
         tap(t, node)
@@ -515,18 +516,18 @@ class Replayer(
         val isChosen = { t: LiveTree -> t.nodes.any { !it.editable && chosen.containsMatchIn(it.text + " " + it.contentDesc) } }
         if (isChosen(device.tree())) return StepResult(i, true)
 
-        suspend fun findOpener() = poll(cfg.waitMs) { t -> t.nodes.firstOrNull { ADDRESS_HEADER.containsMatchIn(it.text + " " + it.contentDesc) }?.let { t to it } }
+        suspend fun findOpener() = poll(cfg.waitMs) { t -> Visibility.visible(t.nodes).firstOrNull { ADDRESS_HEADER.containsMatchIn(it.text + " " + it.contentDesc) }?.let { t to it } }
         val opener = findOpener()
             ?: (if (passInterstitial()) findOpener() else null)
             ?: return StepResult(i, false, error = "couldn't find where to change the delivery address")
         tap(opener.first, opener.second)
 
         val isEntry = { n: UiNode -> !n.editable && (n.text.trim().equals(label, true) || n.contentDesc.trim().equals(label, true)) }
-        val entry = { t: LiveTree -> t.nodes.firstOrNull(isEntry)?.let { t to it } }
+        val entry = { t: LiveTree -> Visibility.visible(t.nodes).firstOrNull(isEntry)?.let { t to it } }
         var found = poll(cfg.waitMs, entry)
         // Two saved addresses with the same label are two different places: never pick one by list order.
         found?.let { (t, _) ->
-            val rows = t.nodes.filter(isEntry).map { n -> RowContext.of(t.nodes, n, isEntry).map(RowContext::norm).toSet() }.distinct()
+            val rows = Visibility.visible(t.nodes).filter(isEntry).map { n -> RowContext.of(t.nodes, n, isEntry).map(RowContext::norm).toSet() }.distinct()
             if (rows.size > 1) {
                 device.back()
                 return StepResult(i, false, error = "You have ${rows.size} saved addresses called \"$label\", and I can't tell which one you mean. Which should I use?")

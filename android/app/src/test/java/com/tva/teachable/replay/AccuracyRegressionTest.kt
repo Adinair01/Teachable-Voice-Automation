@@ -350,4 +350,26 @@ class AccuracyRegressionTest {
             n(4, 1, z = 12), n(5, 2, "Menu", click = true, b = "800 2000 1040 2120")) // a floating button's container
         assertTrue(com.tva.teachable.core.Visibility.visible(nodes).any { it.text == "Margherita Pizza" })
     }
+
+    private fun realCart(): List<UiNode> {
+        val arr = org.json.JSONArray(javaClass.getResource("/screens/zomato_cart_over_menu.json")!!.readText())
+        return (0 until arr.length()).map { k -> arr.getJSONObject(k).let { o ->
+            UiNode(o.getInt("i"), o.getInt("d"), o.getString("pkg"), o.getString("id"), o.getString("text"), o.getString("desc"), o.getString("cls"),
+                o.getString("b"), o.getBoolean("click"), o.getBoolean("edit"), o.getBoolean("scroll"), false, o.getInt("z"), o.getBoolean("vis"))
+        } }
+    }
+
+    @Test fun `step matching on the real cart - the menu's hidden Continue is never a target, the cart's controls are`() {
+        val nodes = realCart()
+        // Before: a taught "Continue" step matched the menu's bar UNDER the open cart and tapped it.
+        assertNull(SelectorMatcher.target(nodes, Selector(text = "Continue"), null, true))
+        // The menu's own tappable controls are all still in the tree under the cart: none of them is a target now.
+        for (hiddenControl in listOf("Veg", "Filters", "See items", "4 offers"))
+            assertNull(hiddenControl, SelectorMatcher.target(nodes, Selector(text = hiddenControl), null, true))
+        assertEquals("Select address at next step", SelectorMatcher.target(nodes, Selector(text = "Select address at next step"), null, true)?.text)
+        // The quantity stepper of a dish IN THE CART, not of the same dish on the menu underneath.
+        val stepper = com.tva.teachable.core.Steppers.find(nodes, "Margherita Pizza", "Margherita")
+        assertEquals("the cart's Margherita stepper (node 121)", 121, stepper?.number?.index)
+        assertNotNull(com.tva.teachable.core.ScreenGuard.readyToPay(nodes))
+    }
 }
