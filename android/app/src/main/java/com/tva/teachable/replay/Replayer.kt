@@ -73,6 +73,8 @@ data class RunResult(
     /** What the user's answers imply for the stored flow. Persisting any of it is the backend's job, and needs a yes. */
     val corrections: List<Correction> = emptyList(),
     val questions: Int = 0,
+    /** The user said they were where they wanted to be ("done, thank you") while being asked something. */
+    val finishedByUser: Boolean = false,
 )
 
 class Replayer(
@@ -109,6 +111,8 @@ class Replayer(
             runSteps(flow, slots, results) { current = it }
         } catch (e: AtBoundary) {
             done(e.boundary.kind == BoundaryKind.PAYMENT, results + handover(current, e.boundary), handover = e.boundary)
+        } catch (e: UserFinished) {
+            RunResult(true, results + StepResult(current, true, error = "you said that's it"), corrections = corrections.toList(), questions = asked, finishedByUser = true)
         }
     }
 
@@ -122,6 +126,13 @@ class Replayer(
             }
             val next = flow.steps.getOrNull(i + 1)
             var r = runStep(i, step, next, slots)
+            // Already where an order ends (the cart or checkout) and this plain, un-parameterised step is not here: it was
+            // a detour of the demonstration (a coupon "APPLY", a "Woohoo! Thanks"), and asking about it once the
+            // destination is reached only puzzles the user. Never for a step tied to a requested value.
+            if (!r.ok && r.cause == StuckCause.MISSING_TARGET && step.type == StepType.TAP && step.slotRef == null && step.selector.near.isEmpty() &&
+                isOrdering(flow) && ScreenGuard.readyToPay(device.tree().nodes) != null) {
+                r = StepResult(i, true, error = "skipped: already at the cart")
+            }
             // A step that could not proceed is a question, not a verdict: ask, act on the answer, and carry on.
             if (!r.ok && r.cause != null && !r.declined && r.handover == null && asker != null) {
                 r = resolveByAsking(i, step, next, slots, r, results, flow.steps.size)
@@ -146,6 +157,8 @@ class Replayer(
 
     /** A payment, OTP, login or password screen appeared: the run ends there, whatever it was in the middle of. */
     private class AtBoundary(val boundary: Boundary) : Exception()
+    /** The user answered a question with "done, thank you": they are where they wanted to be. */
+    private class UserFinished : Exception()
 
     /**
      * Every tap and every typed text goes through here. The screen is read afresh and, if it has become a payment /
@@ -155,6 +168,8 @@ class Replayer(
     private fun tap(tree: LiveTree, node: UiNode): Boolean { guard(); return device.tap(tree, node) }
     private fun type(tree: LiveTree, node: UiNode, value: String): Boolean { guard(); return device.type(tree, node, value) }
     private fun guard() { ScreenGuard.screen(device.tree().nodes)?.let { throw AtBoundary(it) } }
+
+    private fun isOrdering(flow: Flow) = flow.steps.any { it.type == StepType.SET_QUANTITY || it.type == StepType.CHOOSE_ADDRESS }
 
     private fun done(success: Boolean, steps: List<StepResult>, declined: Boolean = false, handover: Boundary? = null) =
         RunResult(success, steps, declined, handover, corrections.toList(), asked)
@@ -580,6 +595,7 @@ class Replayer(
             note = ""
             when (val a = AnswerParser.parse(reply)) {
                 Answer.Stop -> return r.copy(error = "you asked me to stop", cause = null)
+                Answer.Finished -> throw UserFinished()
                 Answer.Unclear -> note = "Sorry, I didn't understand that."
                 Answer.Skip -> {
                     if (step.slotRef != null || step.type != StepType.TAP && step.type != StepType.TYPE) {
@@ -636,6 +652,7 @@ class Replayer(
             note = ""
             when (val a = AnswerParser.parse(reply)) {
                 Answer.Stop, Answer.Skip -> return null
+                Answer.Finished -> throw UserFinished()
                 Answer.Unclear -> note = "Sorry, I didn't understand that."
                 Answer.Retry -> reachedCheckout()?.let { return it } // they took me there themselves
                 is Answer.Tap -> when (val t = tapNamed(a)) {

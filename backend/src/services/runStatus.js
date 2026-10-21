@@ -45,6 +45,7 @@ export function statusLine(run, flow) {
   if (!run) return "I haven't run anything yet.";
   // What was ASKED for, not what the flow was taught with: a Margherita run of the Farmhouse-taught flow is a Margherita run.
   const what = tidyCommand(run.utterance || flow?.description || '') || 'that task';
+  if (run.endedByUser) return `The last run of "${what}" got you where you wanted: you told me that was it, so I stopped there.`;
   if (run.declined) return `The last run of "${what}" was stopped by you before a sensitive step.`;
   if (run.handover) return `The last run of "${what}" reached the ${run.handover} screen and handed over to you. That is where it stopped.`;
   if (run.success) return `Yes, the last run of "${what}" finished all its steps.`;

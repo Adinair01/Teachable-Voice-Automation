@@ -64,4 +64,12 @@ class AnswerParserTest {
         assertEquals(listOf("home"), chained.then)                           // was one 55-character "caption"
         assertEquals(Answer.Tap("bottom"), a("Click bottom button."))
     }
+
+    @Test fun doneThankYouMeansTheUserGotThere() {
+        for (said in listOf("Done. Thank you.", "done thank you", "thank you", "thanks", "okay thanks", "that's it", "that's all, thanks", "all done thanks"))
+            assertEquals(said, Answer.Finished, a(said))
+        // A bare "done" still means "I'm back, look again"; "no thanks" still means stop.
+        assertEquals(Answer.Retry, a("done"))
+        assertEquals(Answer.Stop, a("no thanks"))
+    }
 }

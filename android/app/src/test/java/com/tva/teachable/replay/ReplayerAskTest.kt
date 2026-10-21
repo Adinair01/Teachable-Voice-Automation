@@ -105,15 +105,17 @@ class ReplayerAskTest {
     }
 
     @Test fun theStuckAfterAddRunAfter() {
-        // AFTER: it asks, "tap continue" is acted on in this same run, "skip it" clears the second stale step, and the
-        // run reaches the cart and hands over — with both corrections reported, none applied.
+        // AFTER: it asks, "tap continue" is acted on in this same run and reaches the cart; the second stale step is then
+        // skipped without a question, since the run is already where an order ends (2026-10-21: asking about a demo
+        // detour once at the cart only puzzled the user). The one correction is reported, not applied.
         val phone = afterAdd()
-        val asker = Scripted("tap continue", "skip it")
+        val asker = Scripted("tap continue")
         val r = run(phone, asker, staleTail, mapOf("item" to "Margherita pizza"))
         assertTrue(r.steps.toString(), r.success)
         assertEquals(BoundaryKind.PAYMENT, r.handover?.kind)
         assertEquals(listOf("Continue"), phone.tapped)
-        assertEquals(2, r.questions)
+        assertEquals(1, r.questions)
+        assertEquals("skipped: already at the cart", r.steps[1].error)
 
         // The first question says where the run got to and what is on the screen, and offers the ways to answer.
         val q1 = asker.asked[0].spoken
@@ -124,14 +126,12 @@ class ReplayerAskTest {
         assertEquals(StuckCause.MISSING_TARGET, asker.asked[0].cause)
 
         val c = r.corrections
-        assertEquals(2, c.size)
+        assertEquals(1, c.size)
         assertEquals(CorrectionKind.FLOW_DEFECT, c[0].kind)
         assertEquals(CorrectionOp.REPLACE_SELECTOR, c[0].op)
         assertEquals(0, c[0].stepIndex)
         assertEquals("Continue", c[0].selector?.contentDesc)
         assertEquals("a learned selector prefers its caption to a layout-specific id", "", c[0].selector?.resourceId)
-        assertEquals(CorrectionOp.MARK_OPTIONAL, c[1].op)
-        assertEquals(1, c[1].stepIndex)
     }
 
     // ---------- never a dead end, never a guess ----------

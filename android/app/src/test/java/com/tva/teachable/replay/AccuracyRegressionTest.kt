@@ -290,4 +290,27 @@ class AccuracyRegressionTest {
         // Before: "This screen shows "Unlock Flat ₹125 OFF", "ADD", "₹355", "Cheese Volcano Farmhouse"" on the cart.
         assertTrue(questions.first(), questions.first().contains("This screen shows \"Select address at next step\""))
     }
+
+    @Test fun `at the cart, a leftover demo step (the old flow's coupon APPLY) is skipped, not asked about`() {
+        // Seen live: every old-flow run reached the cart and then asked "I can't find APPLY… What should I do?".
+        val questions = ArrayList<String>()
+        val r = runBlocking {
+            Replayer(Cart(), cfg = fast, asker = { q -> questions += q.spoken; null }).run(
+                Flow("k", "d", z, listOf(FlowStep(StepType.TAP, Selector(text = "APPLY")), FlowStep(StepType.SET_QUANTITY, Selector(near = "{{item}}"), slotRef = "quantity"))),
+                mapOf("item" to "Margherita pizza"))
+        }
+        assertTrue(questions.toString(), questions.isEmpty())
+        assertTrue(r.steps.toString(), r.success)
+    }
+
+    @Test fun `"Done, thank you" in answer to a question ends the run as the user's success`() {
+        val questions = ArrayList<String>()
+        val r = runBlocking {
+            Replayer(Cart(), cfg = fast, asker = { q -> questions += q.spoken; "Done. Thank you." })
+                .run(Flow("k", "d", z, listOf(FlowStep(StepType.TAP, Selector(text = "APPLY")), FlowStep(StepType.TAP, Selector(text = "Woohoo! Thanks")))), emptyMap())
+        }
+        assertEquals(1, questions.size)
+        assertTrue(r.success)
+        assertTrue(r.finishedByUser)
+    }
 }

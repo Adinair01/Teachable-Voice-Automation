@@ -19,6 +19,8 @@ sealed interface Answer {
         var then: List<String> = emptyList()
             internal set
     }
+    /** "Done, thank you", "that's it": the user is where they wanted to be. The run ends there, as a success. */
+    data object Finished : Answer
     /** Nothing usable was said. */
     data object Unclear : Answer
 }
@@ -46,10 +48,18 @@ object AnswerParser {
     // Said twice under pressure ("done done", "skip skip it"): one word repeated is one word.
     private val REPEATED = Regex("\\b(\\w+)(\\s+\\1\\b)+")
 
+    // Thanks, or a plain "that's all": the task is done for the user. A bare "done" is NOT this — it has always meant
+    // "I'm back, look again" (after the user sorted something out themselves) — but "done, thank you" is.
+    private val FINISHED = Regex(
+        "^(ok |okay |yes |yeah |great |perfect |awesome )?" +
+            "((all |i'?m |i am |we'?re |we are )?done( now)?( (thanks?|thank you)( (so much|a lot|very much))?)|(thanks?|thank you)( (so much|a lot|very much))?|that'?s (it|all|enough|perfect)( thanks?| thank you)?|that will do( thanks?| thank you)?|perfect( thanks?| thank you)?|all good( thanks?| thank you)?)$",
+    )
+
     fun parse(raw: String): Answer {
         val spoken = raw.lowercase().replace(Regex("[\\p{P}&&[^'&]]"), " ").replace(Regex("\\s+"), " ").trim()
             .replace(REPEATED, "$1")
         if (spoken.isEmpty()) return Answer.Unclear
+        if (FINISHED.matches(spoken.removePrefix("please ").trim())) return Answer.Finished
         // A bare "okay" or "yes" is itself an answer (try again); only words AROUND an answer are filler.
         val t = FILLER.replace(spoken, "").trim().ifEmpty { spoken }
         if (STOP.matches(t)) return Answer.Stop

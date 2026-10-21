@@ -19,6 +19,10 @@ import { stripEcho } from '../services/echo.js';
 
 /** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
 const TEACH_PROMPT = "I haven't learned that yet. Show me once: do it on the screen, then say done.";
+/** Said when the user ends a run with "done, thank you": they are where they wanted to be. */
+const GLAD = "I'm glad you got to your destination. Thank you!";
+// "Thank you", "done, thanks", "that's all": the user signing off. Never a new task to learn. (A bare "done" is not this.)
+const THANKS = /^\s*(?:ok(?:ay)?[\s,]+|great[\s,]+|perfect[\s,]+)?(?:(?:all |i'?m |we'?re )?done[\s,.!]+)?(?:thanks?|thank you)(?: (?:so much|a lot|very much))?[\s.!]*$|^\s*that'?s (?:it|all)(?:[\s,]+thanks?| thank you)?[\s.!]*$/i;
 const CANCEL = /^\s*(cancel|never ?mind|forget it|no)\b/i;
 /** A question the assistant asked is only an open question for this long; after that a reply is a new command. */
 const PENDING_MS = 60_000;
@@ -48,6 +52,8 @@ const runResult = z.object({
   flowId: z.string().min(1),
   success: z.boolean(),
   declined: z.boolean().default(false),
+  // The user answered a question with "done, thank you": they got where they wanted.
+  finished: z.boolean().default(false),
   handover: z.object({ kind: z.enum(HANDOVER_KINDS), reason: z.string().max(200) }).nullable().default(null),
   utterance: z.string().max(500).default(''),
   steps: z.array(z.object({ i: z.number(), ok: z.boolean(), llm: z.boolean().default(false), err: z.string().nullable().default(null) })).max(200).default([]),
@@ -173,6 +179,7 @@ export class Session {
       if (isNo(text)) return this.say("Okay, I've left the flow exactly as it was.");
     }
     if (isStatusQuery(text)) return this.#reportLastRun();
+    if (THANKS.test(text)) return this.say(GLAD);
     try {
       return await this.#understand(text);
     } catch (e) {
@@ -303,7 +310,7 @@ export class Session {
     // The values and the transcript of the replay this result belongs to (the phone does not send them back).
     const mine = this.lastReplay?.flowId === r.flowId ? this.lastReplay : null;
     const base = { flowId: r.flowId, success: r.success, utterance: r.utterance, slots: mine?.slots, heard: mine?.heard };
-    await this.deps.log({ ...base, kind: 'replay', declined: r.declined, handover: r.handover?.kind, stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
+    await this.deps.log({ ...base, kind: 'replay', declined: r.declined, endedByUser: r.finished, handover: r.handover?.kind, stepResults: r.steps.map((s) => ({ index: s.i, ok: s.ok, usedLlmFallback: s.llm, error: s.err })) });
     // A phrasing counts as correctly matched when the matched flow then ran to completion — or when the user
     // stopped it at a sensitive step, which says nothing about the match being wrong.
     // A handover also means the right flow ran: it got as far as the user's own credentials or payment.
@@ -311,7 +318,8 @@ export class Session {
     // What happened, then (if the user's answers showed the flow is out of date) the offer to fix it — ONE spoken
     // message, because two back-to-back ones can cut each other off on the phone.
     let line;
-    if (r.handover) line = handoverLine(r.handover.kind);
+    if (r.finished) line = GLAD;
+    else if (r.handover) line = handoverLine(r.handover.kind);
     else if (r.declined) line = 'Okay, I stopped before that step.';
     else if (r.success) line = 'Done.';
     else {

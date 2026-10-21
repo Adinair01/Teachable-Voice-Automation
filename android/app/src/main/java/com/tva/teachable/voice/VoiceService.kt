@@ -198,6 +198,7 @@ class VoiceService : Service() {
         val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate, asker = StuckAsker(::askUser),
             progress = { i, total, what -> AppState.status.value = "Step ${i + 1}/$total: $what" }).run(flow, slots)
         val outcome = when {
+            r.finishedByUser -> "Done — glad you got there"
             r.handover != null -> "Your turn"
             r.success -> "Done"
             r.declined -> "Stopped"
@@ -205,7 +206,7 @@ class VoiceService : Service() {
         }
         AppState.status.value = outcome
         AppState.log("replay $outcome: ${r.steps.count { it.ok }}/${flow.steps.size}${r.handover?.let { " (${it.reason})" }.orEmpty()}")
-        client.send(JSONObject().put("type", "run_result").put("flowId", m.optString("flowId")).put("success", r.success).put("declined", r.declined)
+        client.send(JSONObject().put("type", "run_result").put("flowId", m.optString("flowId")).put("success", r.success).put("declined", r.declined).put("finished", r.finishedByUser)
             .put("handover", r.handover?.let { JSONObject().put("kind", it.kind.name.lowercase()).put("reason", it.reason) } ?: JSONObject.NULL)
             .put("utterance", m.optString("utterance")).put("steps", JSONArray().also { a ->
                 r.steps.forEach { a.put(JSONObject().put("i", it.index).put("ok", it.ok).put("llm", it.usedLlmFallback).put("err", it.error ?: JSONObject.NULL)) } })

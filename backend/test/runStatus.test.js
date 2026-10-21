@@ -59,3 +59,7 @@ test('Deepgram sentence breaks are removed from a taught command', () => {
   assert.equal(tidyCommand("Order a Farmhouse pizza. From Domino's in Zomato."), "Order a Farmhouse pizza From Domino's in Zomato");
   assert.equal(tidyCommand('Calculate 5.5 plus 2'), 'Calculate 5.5 plus 2');
 });
+
+test('a run the user ended with "done, thank you" is reported as getting them where they wanted', () => {
+  assert.match(statusLine({ success: true, endedByUser: true, utterance: 'order a margherita' }, null), /got you where you wanted/);
+});

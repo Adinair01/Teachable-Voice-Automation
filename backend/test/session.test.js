@@ -245,3 +245,25 @@ test('sync: the spoken text is sent only once its audio is ready, immediately fo
   await h.s.say('Okay, doing that now.');
   assert.deepEqual(order, ['synth', 'say', 'audio', 'bytes']);
 });
+
+// ---- "done, thank you" ----
+
+test('"done, thank you" at the end of a run is answered with the glad line, and the run counts as a success', async () => {
+  const h = harness();
+  const flow = await teach(h, margheritaDemo);
+  h.clear();
+  await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'run_result', flowId: flow._id, success: true, finished: true, utterance: 'order a margherita', steps: [] })));
+  assert.equal(h.said().at(-1), "I'm glad you got to your destination. Thank you!");
+  const run = h.logs.find((l) => l.kind === 'replay');
+  assert.equal(run.success, true);
+  assert.equal(run.endedByUser, true);
+});
+
+test('"thank you" said on its own is a sign-off, never a task to learn; a bare "done" outside teaching is not it', async () => {
+  for (const said of ['Done. Thank you.', 'thank you', 'okay thanks', "that's all, thanks"]) {
+    const h = harness({ flows: [{ _id: 'f1', description: 'x', slots: [], steps: [] }] });
+    await h.s.handleCommand(said);
+    assert.equal(h.said().at(-1), "I'm glad you got to your destination. Thank you!", said);
+    assert.ok(!h.sent.some((m) => m.type === 'teach_start'), said);
+  }
+});
