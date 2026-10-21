@@ -250,3 +250,30 @@ test('a caption with the value INSIDE the control\'s own wording keeps that word
     steps: [{ type: 'launch', value: 'z' }, { type: 'tap', selector: { contentDesc: "Search in Domino's Pizza" }, candidates: 1 }] });
   assert.equal(f.steps[1].selector.contentDesc, 'Search in {{restaurant}}');
 });
+
+// ---- numbers entered key by key (seen live 2026-10-22: "Calculate 30 divided by five" was refused) ----
+
+const key = (k, extra = {}) => ({ type: 'tap', selector: { resourceId: `c:id/digit_${k}`, text: k, className: 'android.widget.Button' }, ...extra });
+const op = (desc) => ({ type: 'tap', selector: { resourceId: `c:id/op`, contentDesc: desc, className: 'android.widget.Button' } });
+
+test('a multi-digit number tapped key by key is ONE slot step: "30 divided by 5" learns {{num1}} / {{num2}}', () => {
+  const f = generalise({ command: 'Calculate 30 divided by five', intentKey: 'calculate', slots: { num1: '30', num2: 'five' },
+    steps: [{ type: 'launch', value: 'calc' }, key('3'), key('0'), op('Divide'), key('5'), op('Equals')] });
+  assert.deepEqual(f.missing, []);
+  assert.deepEqual(f.steps.map((s) => s.selector.text || s.selector.contentDesc || s.type), ['launch', '{{num1}}', 'Divide', '{{num2}}', 'Equals']);
+  assert.deepEqual(f.slots, [{ name: 'num1', example: '30' }, { name: 'num2', example: '5' }]);
+});
+
+test('the same number for both slots ("12 plus 12") fills num1 then num2, not num1 twice', () => {
+  const f = generalise({ command: 'calculate 12 plus 12', intentKey: 'calculate', slots: { num1: '12', num2: '12' },
+    steps: [{ type: 'launch', value: 'calc' }, key('1'), key('2'), op('Add'), key('1'), key('2'), op('Equals')] });
+  assert.deepEqual(f.missing, []);
+  assert.deepEqual(f.steps.filter((s) => s.slotRef).map((s) => s.selector.text), ['{{num1}}', '{{num2}}']);
+});
+
+test('a key tapped by mistake before the number stays a plain step, and single keys still template as before', () => {
+  const f = generalise({ command: 'calculate 30 divided by 5', intentKey: 'calculate', slots: { num1: '30', num2: '5' },
+    steps: [{ type: 'launch', value: 'calc' }, key('3'), key('3'), key('0'), op('Divide'), key('5'), op('Equals')] });
+  assert.deepEqual(f.missing, []);
+  assert.deepEqual(f.steps.map((s) => s.selector.text || s.selector.contentDesc || s.type), ['launch', '3', '{{num1}}', 'Divide', '{{num2}}', 'Equals']);
+});

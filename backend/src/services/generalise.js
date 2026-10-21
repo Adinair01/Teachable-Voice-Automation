@@ -125,8 +125,44 @@ export const IMPLIED_SLOTS = [{ name: 'quantity', example: '1' }, { name: 'addre
  * if a typed value or tapped element text contains the spoken slot value (case-insensitive) it becomes {{slot}}.
  * Steps on credential-looking fields are dropped (never stored). Sensitive taps are flagged.
  */
-export function generalise({ command, intentKey, slots, steps }) {
+const KEY = /^\d$/;
+const keyOf = (raw) => raw.type === 'tap' && [raw.selector?.text, raw.selector?.contentDesc].map((c) => String(c ?? '').trim()).find((c) => KEY.test(c));
+
+/**
+ * A number taught on a keypad is several key taps: "30" is "3" then "0". Matched one tap at a time it could never be
+ * found, so a calculator demo of "30 divided by 5" was refused (seen live). A run of consecutive single-digit key taps
+ * that spells a slot's value (in digits) becomes ONE tap on that value — which the step loop then templates as the
+ * slot, and which replay enters key by key. Each slot is matched once, in order, so "12 plus 12" gives num1 and num2.
+ */
+function joinKeyRuns(steps, slotEntries) {
+  const wanted = slotEntries.map(([slot, example]) => [slot, forms(example).find((f) => /^\d{2,}$/.test(String(f).trim()))])
+    .filter(([, digits]) => digits);
+  if (!wanted.length) return steps;
+  const used = new Set();
+  const out = [];
+  for (let i = 0; i < steps.length;) {
+    if (!keyOf(steps[i])) { out.push(steps[i++]); continue; }
+    let end = i;
+    while (end < steps.length && keyOf(steps[end])) end++;
+    const keys = steps.slice(i, end).map(keyOf).join('');
+    // The first not-yet-used slot whose value is spelled somewhere in this run; taps around it stay as they were.
+    const hit = wanted.find(([slot, digits]) => !used.has(slot) && keys.includes(digits));
+    if (!hit) { out.push(...steps.slice(i, end)); i = end; continue; }
+    const [slot, digits] = hit;
+    used.add(slot);
+    const at = i + keys.indexOf(digits);
+    out.push(...steps.slice(i, at));
+    const first = steps[at];
+    out.push({ ...first, selector: { ...first.selector, resourceId: '', text: digits, contentDesc: '' }, context: [], candidates: 1, keyedSlot: slot });
+    out.push(...steps.slice(at + digits.length, end));
+    i = end;
+  }
+  return out;
+}
+
+export function generalise({ command, intentKey, slots, steps: recorded }) {
   const slotEntries = Object.entries(slots ?? {}).filter(([, v]) => v);
+  const steps = joinKeyRuns(recorded, slotEntries);
   // The form each slot was actually demonstrated in ("5" for a spoken "five"): stored as the example, because replay
   // puts new values into the TAUGHT shape (fitToTaught) and a word-shaped example would leave "seven" unconverted.
   const shown = {};
@@ -138,9 +174,11 @@ export function generalise({ command, intentKey, slots, steps }) {
   for (const raw of steps) {
     const sel = { resourceId: '', text: '', contentDesc: '', className: '', ...(raw.selector ?? {}) };
     if (looksLikeCredentialField(`${sel.resourceId} ${sel.contentDesc} ${sel.text}`)) continue;
-    const { context = [], candidates = 0, screen: landedOn = [], ...rest } = raw;
+    const { context = [], candidates = 0, screen: landedOn = [], keyedSlot, ...rest } = raw;
     const step = { ...rest, selector: sel, slotRef: null, value: raw.value ?? '', sensitive: false, expect: raw.expect ?? {} };
-    for (const [slot, example] of slotEntries) {
+    // A number joined from its key taps already knows which slot it is (see joinKeyRuns).
+    if (keyedSlot) { shown[keyedSlot] ??= sel.text; sel.text = `{{${keyedSlot}}}`; step.slotRef = keyedSlot; step.ownCaption = true; }
+    for (const [slot, example] of keyedSlot ? [] : slotEntries) {
       if (step.type === 'type') {
         const v = find(slot, example, (f) => tokenise(step.value, f, slot, { whole: true }));
         if (v) { step.value = v; step.slotRef = slot; }
