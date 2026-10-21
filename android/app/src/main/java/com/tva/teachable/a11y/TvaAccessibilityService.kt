@@ -221,7 +221,7 @@ class TvaAccessibilityService : AccessibilityService(), Device {
             Rect().also { w.getBoundsInScreen(it) }.contains(x, y)
     }
 
-    /** Debug-only adb channel: `adb shell am broadcast -a com.tva.DEBUG --es cmd <dump|guard|check|tap|type|scroll|back|replay|rec_start|rec_stop>`. */
+    /** Debug-only adb channel: `adb shell am broadcast -a com.tva.DEBUG --es cmd <dump|status|guard|check|tap|type|scroll|back|replay|rec_start|rec_stop>`. */
     private fun registerDebugReceiver() {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) {
@@ -234,6 +234,8 @@ class TvaAccessibilityService : AccessibilityService(), Device {
                 if (cmd == "replay") { debugReplay(i.getStringExtra("file").orEmpty(), i.getStringExtra("slots").orEmpty()); return }
                 val result = when (cmd) {
                     "dump" -> dump()
+                    // For tools/up.sh: is the voice assistant running and connected to the backend right now?
+                    "status" -> "voice=${com.tva.teachable.voice.VoiceService.instance != null} connected=${com.tva.teachable.AppState.connected.value} teaching=${com.tva.teachable.AppState.teaching.value}"
                     "tap" -> withNode(sel, forTap = true) { t, n -> tap(t, n) }.toString()
                     "type" -> withNode(sel, forTap = false) { t, n -> type(t, n, i.getStringExtra("value").orEmpty()) }.toString()
                     "say" -> (com.tva.teachable.voice.VoiceService.instance?.also { it.sendCommand(i.getStringExtra("text").orEmpty()) } != null).toString()
