@@ -212,3 +212,36 @@ test('L: when every model fails, the user hears why instead of nothing', async (
   await h.s.handleCommand('order a pizza');
   assert.match(h.said().at(-1), /busy right now/);
 });
+
+// ---- the assistant's own voice, guesses, and sync ----
+
+test('echo: a command that starts with the assistant\'s last line is understood without it', async () => {
+  const h = harness();
+  await h.s.say('I stopped at step 12: you asked me to stop.');
+  let matched;
+  h.deps.matchFlow = async (text) => { matched = text; return { flowId: null, slots: {} }; };
+  h.deps.stt = () => ({ write() {}, finish: async () => ({ text: "Step 12. You asked me to stop. Order a Farmhouse pizza.", confidence: 0.98, words: [] }) });
+  await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'audio_start' })));
+  await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'audio_end' })));
+  assert.equal(h.sent.find((m) => m.type === 'transcript').text, 'Order a Farmhouse pizza.');
+});
+
+test('a one-word or low-confidence voice command never opens teach mode (it asks to hear it again)', async () => {
+  for (const heard of [{ text: 'Then', confidence: 0.63 }, { text: 'order something nice', confidence: 0.4 }]) {
+    const h = harness({ flows: [{ _id: 'f1', description: 'x', slots: [], steps: [] }] });
+    h.deps.stt = () => ({ write() {}, finish: async () => ({ ...heard, words: [] }) });
+    await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'audio_start' })));
+    await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'audio_end' })));
+    assert.ok(!h.sent.some((m) => m.type === 'teach_start'), heard.text);
+    assert.match(h.said().at(-1), /didn't catch that/);
+  }
+});
+
+test('sync: the spoken text is sent only once its audio is ready, immediately followed by the audio', async () => {
+  const h = harness();
+  const order = [];
+  h.deps.synthesize = async () => { order.push('synth'); return Buffer.from('mp3'); };
+  h.s.socket.send = (m) => order.push(typeof m === 'string' ? JSON.parse(m).type : 'bytes');
+  await h.s.say('Okay, doing that now.');
+  assert.deepEqual(order, ['synth', 'say', 'audio', 'bytes']);
+});

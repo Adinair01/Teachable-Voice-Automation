@@ -47,4 +47,13 @@ class AnswerParserTest {
         assertEquals(Answer.Tap("domino's pizza"), a("tap Domino's Pizza"))
         assertEquals(Answer.Tap("corn & cheese"), a("tap corn & cheese"))
     }
+
+    @Test fun wordsAroundAnAnswerDoNotHideIt() {
+        // Said into the mic under pressure: "okay, skip it" used to become a tap on a control called "okay skip it".
+        assertEquals(Answer.Skip, a("okay, skip it"))
+        assertEquals(Answer.Stop, a("please just stop"))
+        assertEquals(Answer.Tap("continue"), a("um tap Continue please"))
+        assertEquals(Answer.Retry, a("okay"))
+        assertEquals(Answer.Retry, a("yes"))
+    }
 }

@@ -97,6 +97,9 @@ class VoiceService : Service() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             AppState.log("microphone permission missing — open the app and allow it"); return
         }
+        // The user talking cuts the assistant off at once: its voice would otherwise be recorded as part of what they say
+        // (seen live: "Step 12. You asked me to stop. Order a Farmhouse pizza…").
+        player.release()
         client.send(JSONObject().put("type", "audio_start").put("mode", if (awaitingConfirmSpeech || awaitingAnswer) "confirm" else "command"))
         if (!recorder.start()) { client.send(JSONObject().put("type", "audio_end")); return } // don't leave the STT stream open
         AppState.listen.value = mode
@@ -132,7 +135,12 @@ class VoiceService : Service() {
     fun answerConfirm(yes: Boolean) { confirm?.complete(yes) }
 
     // ---- server messages ----
-    private fun onAudio(bytes: ByteArray) { if (expectAudio) { expectAudio = false; runCatching { player.play(bytes) } } }
+    /** A reply that arrives while the user is talking is not played over them. */
+    private fun onAudio(bytes: ByteArray) {
+        if (!expectAudio) return
+        expectAudio = false
+        if (AppState.listen.value == ListenMode.IDLE) runCatching { player.play(bytes) }
+    }
 
     private fun onServer(m: JSONObject) {
         when (m.optString("type")) {
@@ -183,10 +191,12 @@ class VoiceService : Service() {
         val svc = TvaAccessibilityService.instance ?: return AppState.log("Accessibility Service is not enabled")
         val flowJson = m.getJSONObject("flow"); val flow = FlowJson.parse(flowJson.toString())
         val slots = m.optJSONObject("slots")?.let { o -> o.keys().asSequence().associateWith { o.getString(it) } }.orEmpty()
-        AppState.status.value = "Running: ${flow.description}"
+        // What was ASKED for, not the taught description: "Running: Order a Farmhouse pizza" for a Margherita order misled.
+        AppState.status.value = "Running: ${m.optString("utterance").ifBlank { flow.description }.take(60)}"
         if (BuildConfig.DEBUG) Log.d("TVA", "replay slots=$slots")
         val gate = ConfirmationGate { step, _ -> askConfirmation("${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc }}".trim()) }
-        val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate, asker = StuckAsker(::askUser)).run(flow, slots)
+        val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate, asker = StuckAsker(::askUser),
+            progress = { i, total, what -> AppState.status.value = "Step ${i + 1}/$total: $what" }).run(flow, slots)
         val outcome = when {
             r.handover != null -> "Your turn"
             r.success -> "Done"
@@ -219,12 +229,16 @@ class VoiceService : Service() {
      */
     private suspend fun askUser(q: Stuck): String? {
         val d = CompletableDeferred<String>(); answer = d; awaitingAnswer = true
-        AppState.status.value = "Waiting for your answer"
+        AppState.status.value = "Question — hold the button to answer"
+        val asked = System.currentTimeMillis()
         client.send(JSONObject().put("type", "say_request").put("text", q.spoken.take(SPOKEN_MAX)))
-        val reply = withTimeoutOrNull(ANSWER_MS) { d.await() }
+        // The time to answer starts when the question has finished being SAID (or the user cut in), not when it was
+        // sent: a long question used to eat a good part of the wait before the user had even heard it.
+        withTimeoutOrNull(QUESTION_SAID_MS) { while (!d.isCompleted && player.stoppedAt < asked) delay(100) }
+        val reply = if (d.isCompleted) d.await() else withTimeoutOrNull(ANSWER_MS) { d.await() }
         answer = null; awaitingAnswer = false
         AppState.log("answer to \"${q.spoken.take(60)}…\": ${reply ?: "(none)"}")
-        if (reply != null) AppState.status.value = "Running"
+        if (reply != null) AppState.status.value = "Got it: $reply"
         return reply
     }
 
@@ -243,6 +257,8 @@ class VoiceService : Service() {
         private const val CHANNEL = "voice"
         private const val HANDS_FREE_MAX_MS = 60_000L
         private const val ANSWER_MS = 90_000L
+        /** Longest a question may take to be synthesised and played before the answer wait starts anyway. */
+        private const val QUESTION_SAID_MS = 30_000L
         private const val SPOKEN_MAX = 500
         @Volatile var instance: VoiceService? = null
     }

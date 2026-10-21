@@ -15,6 +15,7 @@ import { parseOpenApp, resolveApp } from '../services/openApp.js';
 import { HANDOVER_KINDS, handoverLine } from '../services/handover.js';
 import { isStatusQuery, statusLine, sentence, tidyCommand } from '../services/runStatus.js';
 import { keytermsFor } from '../services/keyterms.js';
+import { stripEcho } from '../services/echo.js';
 
 /** Spoken when nothing matches and teach mode opens (exact wording is part of the demo script). */
 const TEACH_PROMPT = "I haven't learned that yet. Show me once: do it on the screen, then say done.";
@@ -28,6 +29,10 @@ const BUSY = "Sorry, my language service is busy right now. Please say that agai
 // A reply that opens like a request is a new command, not an answer to the question that was asked.
 const COMMAND_START = /^\s*(?:(?:please|ok(?:ay)?|hey|so|and|now|actually|also)[\s,]+)*(?:(?:can|could|would) you\s+|i (?:want|need|would like|'d like) to\s+|let'?s\s+)?(order|book|buy|get me|open|call|send|play|set|search|find|calculate|compute|add|show|take me|navigate|turn|start|launch|text|message|email|did|what|how|where|is|are|do|does|tell)\b/i;
 const MAX_ANSWER_WORDS = 6;
+/** How long something the assistant said can still come back through the microphone. */
+const ECHO_MS = 30_000;
+/** Below this the recogniser was guessing: a new task is not opened on a guess. */
+const MIN_CONFIDENCE = 0.7;
 const DONE = /^\s*(done|i'?m done|finished|that'?s it|stop teaching)\b/i;
 
 const teachDone = z.object({
@@ -74,6 +79,8 @@ export class Session {
     this.heard = null;
     this.keyterms = [];
     this.saidAt = 0;
+    /** What the assistant said recently, to recognise it if the microphone picks it up again. */
+    this.spoken = [];
     this.refreshKeyterms();
   }
 
@@ -86,14 +93,20 @@ export class Session {
       .catch((e) => logger.warn({ err: e.message }, 'keyterms not refreshed'));
   }
 
+  /**
+   * The words and the voice go out TOGETHER: the text used to be shown a second before the audio (synthesis time), so
+   * what was on screen and what was heard never lined up. If synthesis fails the text still goes out.
+   */
   async say(text) {
-    this.saidAt = this.deps.now();
+    const now = this.deps.now();
+    this.saidAt = now;
+    this.spoken = [...this.spoken.filter((s) => now - s.at < ECHO_MS), { text, at: now }];
+    let audio = null;
+    try { audio = await this.deps.synthesize(text); } catch (e) { logger.warn({ err: e.message }, 'tts failed; text only'); }
     this.send({ type: 'say', text });
-    try {
-      const audio = await this.deps.synthesize(text);
-      this.send({ type: 'audio', format: 'mp3' });
-      if (this.socket.readyState === 1) this.socket.send(audio);
-    } catch (e) { logger.warn({ err: e.message }, 'tts failed; text only'); }
+    if (!audio) return;
+    this.send({ type: 'audio', format: 'mp3' });
+    if (this.socket.readyState === 1) this.socket.send(audio);
   }
 
   async onMessage(data, isBinary) {
@@ -129,7 +142,11 @@ export class Session {
     const stt = this.stt; this.stt = null;
     if (!stt) return;
     const heard = await stt.finish();
-    const text = heard.text;
+    // The microphone may have caught the end of the assistant's own last reply: that is not the user speaking.
+    const recent = this.spoken.filter((s) => this.deps.now() - s.at < ECHO_MS).map((s) => s.text);
+    const text = stripEcho(heard.text ?? '', recent);
+    if (text !== (heard.text ?? '').trim()) logger.info({ heard: heard.text, kept: text }, 'removed the assistant\'s own words from a transcript');
+    heard.text = text;
     this.send({ type: 'transcript', text });
     if (this.sttMode === 'confirm') return;
     if (!text) return this.say("Sorry, I didn't catch that.");
@@ -194,6 +211,11 @@ export class Session {
     }
     // No flow matched although some exist: for an eval set of paraphrases that is a miss, and the metric would
     // flatter itself if only matched-and-replayed runs were ever counted. (A genuinely new task lands here too.)
+    // A recogniser's guess ("Then", confidence 0.63, seen live) must not open teach mode: ask for it again instead.
+    const h = this.heard;
+    if (h?.source === 'voice' && (text.trim().split(/\s+/).length < 2 || (h.confidence != null && h.confidence < MIN_CONFIDENCE))) {
+      return this.say("Sorry, I didn't catch that. Hold the button and say it again.");
+    }
     if (flows.length) await this.deps.log({ kind: 'match', success: false, utterance: text, heard: this.heard });
     // Slots for a new task always come from the dedicated extractor: the matcher's side-output for a non-match can
     // return a whole phrase ("5 plus 3") as one slot, which then cannot be found in the demonstration.

@@ -29,9 +29,14 @@ object AnswerParser {
     private val TRAIL = Regex(" (button|option|link|tab|icon|one)$")
     private const val MAX_CAPTION = 60
 
+    // Words people put around an answer: "okay, skip it", "please just stop", "um tap Continue".
+    private val FILLER = Regex("^((please|just|ok|okay|um|uh|so|then|yeah|hey|now|alright|right|fine)\\s+)+|(\\s+(please|now|then|thanks|thank you))+$")
+
     fun parse(raw: String): Answer {
-        val t = raw.lowercase().replace(Regex("[\\p{P}&&[^'&]]"), " ").replace(Regex("\\s+"), " ").trim()
-        if (t.isEmpty()) return Answer.Unclear
+        val spoken = raw.lowercase().replace(Regex("[\\p{P}&&[^'&]]"), " ").replace(Regex("\\s+"), " ").trim()
+        if (spoken.isEmpty()) return Answer.Unclear
+        // A bare "okay" or "yes" is itself an answer (try again); only words AROUND an answer are filler.
+        val t = FILLER.replace(spoken, "").trim().ifEmpty { spoken }
         if (STOP.matches(t)) return Answer.Stop
         if (SKIP.matches(t)) return Answer.Skip
         if (RETRY.matches(t)) return Answer.Retry

@@ -228,4 +228,16 @@ class AccuracyRegressionTest {
         assertTrue(screen.tapped.toString(), screen.tapped.isEmpty())
         assertEquals(1, q.size)
     }
+
+    @Test fun `progress names each step with THIS run's values, as it starts`() {
+        val screen = Screen(tree(row(0), row(1, text = "Margherita Pizza", click = true), row(1, desc = "Next", click = true)))
+        val seen = ArrayList<String>()
+        runBlocking {
+            Replayer(screen, cfg = fast, progress = { i, n, what -> seen += "${i + 1}/$n $what" }).run(Flow("k", "d", z, listOf(
+                FlowStep(StepType.TAP, Selector(text = "{{item}}"), slotRef = "item"),
+                FlowStep(StepType.TAP, Selector(contentDesc = "Next")),
+            )), mapOf("item" to "Margherita pizza"))
+        }
+        assertEquals(listOf("1/2 tapping Margherita pizza", "2/2 tapping Next"), seen)
+    }
 }

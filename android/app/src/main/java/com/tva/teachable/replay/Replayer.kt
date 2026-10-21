@@ -81,6 +81,8 @@ class Replayer(
     private val gate: ConfirmationGate = DenyAll,
     private val cfg: ReplayConfig = ReplayConfig(),
     private val asker: StuckAsker? = null,
+    /** Told as each step starts (index, total, what it does), so what is shown matches what is being done. */
+    private val progress: ((Int, Int, String) -> Unit)? = null,
 ) {
     private var appPackage = ""
     private var llmPicks = 0
@@ -113,6 +115,7 @@ class Replayer(
     private suspend fun runSteps(flow: Flow, slots: Map<String, String>, results: MutableList<StepResult>, at: (Int) -> Unit): RunResult {
         for ((i, step) in flow.steps.withIndex()) {
             at(i)
+            progress?.invoke(i, flow.steps.size, describe(step, slots))
             if (now() - runStart - userTime > cfg.runCapMs) {
                 val err = "This has taken over ${cfg.runCapMs / 60_000} minutes of trying, so I've stopped at step ${i + 1} instead of carrying on."
                 return done(false, results + StepResult(i, false, error = err))
@@ -738,6 +741,21 @@ class Replayer(
             i, kind, CorrectionPolicy.op(kind, a), was = labelOf(step),
             now = if (a is Answer.Skip) "skip it" else "tap \"$caption\"", selector = sel,
         )
+    }
+
+    /** "tapping Domino's", "typing Margherita pizza": a step in words, with THIS run's values. */
+    private fun describe(step: FlowStep, slots: Map<String, String>): String {
+        val target = resolveSlots(step.selector.text.ifBlank { step.selector.contentDesc }, slots).take(30)
+        return when (step.type) {
+            StepType.LAUNCH -> "opening the app"
+            StepType.TYPE -> "typing ${resolveSlots(step.value, slots).take(30)}"
+            StepType.TAP -> if (target.isNotBlank()) "tapping $target" else if (step.selector.near.isNotBlank()) "tapping in the ${resolveSlots(step.selector.near, slots)} row" else "tapping"
+            StepType.SCROLL -> "scrolling"
+            StepType.BACK -> "going back"
+            StepType.WAIT -> "waiting"
+            StepType.SET_QUANTITY -> "setting the quantity"
+            StepType.CHOOSE_ADDRESS -> "choosing the address"
+        }
     }
 
     private fun labelOf(step: FlowStep) =

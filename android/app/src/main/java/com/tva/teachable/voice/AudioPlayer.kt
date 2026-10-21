@@ -7,6 +7,10 @@ import java.io.File
 /** Plays the mp3 replies from Deepgram Aura. One utterance at a time; a new one replaces the old. */
 class AudioPlayer(private val ctx: Context) {
     private var player: MediaPlayer? = null
+    /** When the last utterance stopped playing (finished, replaced, or cut off because the user started talking). */
+    @Volatile var stoppedAt = 0L
+        private set
+    val playing get() = player != null
 
     @Synchronized
     fun play(mp3: ByteArray) {
@@ -19,5 +23,5 @@ class AudioPlayer(private val ctx: Context) {
         }
     }
 
-    @Synchronized fun release() { player?.release(); player = null }
+    @Synchronized fun release() { if (player != null) stoppedAt = System.currentTimeMillis(); player?.release(); player = null }
 }
