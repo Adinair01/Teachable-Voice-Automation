@@ -31,13 +31,45 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
     private val steps = ArrayList<FlowStep>()
     private var pendingType: FlowStep? = null
     private var launched = false
+    /**
+     * Called once when the demonstration reaches a payment, OTP, login or password screen. That screen is where every
+     * ordering demo ends (T1 "stop at the payment page"), so the teach finishes there; nothing on it is ever recorded.
+     */
+    @Volatile var onBoundaryReached: ((com.tva.teachable.core.Boundary) -> Unit)? = null
+    private var boundaryReported = false
+
     /** Taps come from the TouchCatcher (onUserTap) instead of TYPE_VIEW_CLICKED, which would double-record them. */
     @Volatile var touchMode = false
 
-    fun start() { steps.clear(); pendingType = null; launched = false; undoable = -1 }
+    fun start() { steps.clear(); pendingType = null; launched = false; undoable = -1; window = ""; boundaryReported = false }
 
     /** Index of the tap a Back press would undo: the last step, while nothing has been recorded after it. */
     private var undoable = -1
+    /** The app window in front (activity or dialog class), the one the undoable tap was made on, and what followed it. */
+    private var window = ""
+    private var tapWindow = ""
+    private var leftTapWindow = false
+    private var touchesSinceTap = 0
+
+    /**
+     * Gesture-navigation Back reaches no app or accessibility service on this phone (verified: no key event, and the
+     * edge swipe never reaches the touch overlay), so it is recognised by what it DOES: the tap opened another window,
+     * and the app came back to the window the tap was made on without the user touching the screen. Decided only at
+     * the next tap or at "done", so a loading dialog that comes and goes on the way to the next screen is not mistaken
+     * for it: by then the app has moved on.
+     */
+    private fun settleUndo() {
+        if (undoable >= 0 && undoable == steps.lastIndex && pendingType == null && leftTapWindow && touchesSinceTap == 0 &&
+            window.isNotEmpty() && window == tapWindow) onBack()
+    }
+
+    /** An app window came to the front ([className] of the activity or dialog). */
+    @Synchronized fun onWindowChanged(pkg: String, className: String) {
+        if (BuildConfig.DEBUG) Log.d("TVA", "rec window $pkg/$className undoable=$undoable tapWindow=$tapWindow touches=$touchesSinceTap")
+        if (ignored(pkg) || className.isEmpty()) return
+        window = className
+        if (undoable >= 0 && className != tapWindow) leftTapWindow = true
+    }
 
     /**
      * The user pressed Back. Straight after a tap, with nothing recorded since, that is "not that one": the tap
@@ -52,7 +84,7 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         Log.i("TVA", "recorder: Back right after tapping ${dropped.selector.text.ifBlank { dropped.selector.contentDesc }.take(40)} - dropped that tap")
     }
 
-    @Synchronized fun stop(): List<FlowStep> { flushType(); return steps.toList() }
+    @Synchronized fun stop(): List<FlowStep> { settleUndo(); flushType(); return steps.toList() }
 
     @Synchronized fun onEvent(e: AccessibilityEvent) {
         val pkg = e.packageName?.toString().orEmpty()
@@ -66,7 +98,10 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
                 if (onBoundary(screen)) { pendingType = null; return }
                 if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) onText(e) else if (!touchMode) onClick(e, screen)
             }
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> onWindow(pkg, UiTreeReader.readLive(e.source?.window?.root).nodes)
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                onWindowChanged(pkg, e.className?.toString().orEmpty())
+                onWindow(pkg, UiTreeReader.readLive(e.source?.window?.root).nodes)
+            }
         }
     }
 
@@ -112,12 +147,15 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
         if (sel.isEmpty) return
         steps += FlowStep(StepType.TAP, sel, context = context, candidates = candidates)
         undoable = steps.lastIndex
+        tapWindow = window; leftTapWindow = false; touchesSinceTap = 0
     }
 
     /** A finger tap seen by the TouchCatcher at (x, y); [screen] was read before the tap reached the app. */
     @Synchronized fun onUserTap(screen: List<UiNode>, x: Int, y: Int) {
         val pkg = screen.firstOrNull()?.packageName.orEmpty()
         if (ignored(pkg)) return
+        settleUndo()
+        touchesSinceTap++
         if (onBoundary(screen)) { pendingType = null; return }
         if (!launched) { steps += FlowStep(StepType.LAUNCH, value = pkg); launched = true }
         val node = TapTarget.at(screen, x, y) ?: return
@@ -158,6 +196,7 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
      * restaurant or dish that was asked for instead of only "still in the same app".
      */
     private fun onWindow(pkg: String, screen: List<UiNode>) {
+        if (onBoundary(screen)) { pendingType = null; return }
         flushType()
         val last = steps.lastOrNull() ?: return
         if (last.type == StepType.TAP && last.expect.packageName.isEmpty()) {
@@ -178,6 +217,7 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
     private fun onBoundary(screen: List<UiNode>): Boolean {
         val b = ScreenGuard.screen(screen) ?: return false
         Log.i("TVA", "recorder: not recording on a ${b.kind} screen (${b.reason})")
+        if (launched && !boundaryReported) { boundaryReported = true; onBoundaryReached?.invoke(b) }
         return true
     }
 

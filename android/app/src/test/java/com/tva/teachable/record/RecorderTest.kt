@@ -61,4 +61,46 @@ class RecorderTest {
         r.tap(screen("Decline", "Answer", pkg = "com.android.incallui"), 1)
         assertEquals(listOf("Domino's Pizza"), taps(r))
     }
+
+    @Test fun `H - gesture Back, seen as the app returning to the tapped-on window with no touch, removes the tap`() {
+        // Gesture navigation sends no key event on this phone, and its edge swipe never reaches the touch overlay.
+        val r = recorder()
+        r.onWindowChanged(z, "MenuActivity")
+        r.tap(screen("Farmhouse Pizza", "Margherita Pizza"), 0)
+        r.onWindowChanged(z, "DishDetailsActivity") // the accidental tap opened something
+        r.onWindowChanged(z, "MenuActivity")        // ...and Back came straight back, untouched
+        r.tap(screen("Farmhouse Pizza", "Margherita Pizza"), 1)
+        assertEquals(listOf("Margherita Pizza"), taps(r))
+    }
+
+    @Test fun `H - a loading dialog on the way to the next screen is not a Back, nor is a return the user tapped for`() {
+        val loading = recorder()
+        loading.onWindowChanged(z, "MenuActivity")
+        loading.tap(screen("Continue"), 0)
+        loading.onWindowChanged(z, "ProgressDialog")
+        loading.onWindowChanged(z, "MenuActivity")
+        loading.onWindowChanged(z, "CartActivity")  // the app moved on: the tap did what it was for
+        loading.tap(screen("Place order"), 0)
+        assertEquals(listOf("Continue", "Place order"), taps(loading))
+
+        val closed = recorder()
+        closed.onWindowChanged(z, "MenuActivity")
+        closed.tap(screen("ADD"), 0)
+        closed.onWindowChanged(z, "CustomiseSheet")
+        closed.tap(screen("Got it"), 0)             // the user touched the screen (an interruption, not recorded)
+        closed.onWindowChanged(z, "MenuActivity")
+        assertEquals(listOf("ADD"), taps(closed))
+    }
+
+    @Test fun `T1 - reaching the payment page ends the teach, and nothing on it is recorded`() {
+        val r = recorder()
+        var ended: String? = null
+        r.onBoundaryReached = { ended = it.kind.name }
+        r.tap(screen("View cart"), 0)
+        r.tap(screen("Proceed to pay"), 0)                                  // on the cart: recorded (replay hands over here)
+        val payment = screen("Payment options", "UPI", "Credit card", "Net banking")
+        r.tap(payment, 1)                                                   // on the payment page: never recorded
+        assertEquals("PAYMENT", ended)
+        assertEquals(listOf("View cart", "Proceed to pay"), taps(r))
+    }
 }

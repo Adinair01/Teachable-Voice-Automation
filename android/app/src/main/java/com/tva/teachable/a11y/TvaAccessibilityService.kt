@@ -48,10 +48,21 @@ class TvaAccessibilityService : AccessibilityService(), Device {
         Log.i(TAG, "service connected")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent) { recorder?.onEvent(event) }
+    /** The app window in front (package, activity/dialog class), kept even when not teaching so a teach starts knowing it. */
+    private var front = "" to ""
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        val pkg = event.packageName?.toString().orEmpty()
+        // App windows only: the launcher and System UI also report window changes as they go to the background.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg.isNotEmpty() && pkg !in notAnApp) {
+            front = pkg to event.className?.toString().orEmpty()
+        }
+        recorder?.onEvent(event)
+    }
 
     /** While teaching, Back is observed (never consumed): right after a tap it undoes that tap (see Recorder.onBack). */
     override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (BuildConfig.DEBUG) Log.d(TAG, "key ${KeyEvent.keyCodeToString(event.keyCode)} action=${event.action} teaching=${recorder != null}")
         if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) recorder?.let { r -> scope.launch(recordLane) { r.onBack() } }
         return false
     }
@@ -86,9 +97,13 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     override fun scroll(tree: LiveTree) = executor.scroll(tree)
     override fun back() = executor.back()
 
-    fun startRecording() {
-        val home = packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
-        recorder = Recorder(packageName, setOfNotNull("com.android.systemui", home)).also { it.start(); it.touchMode = true }
+    private val notAnApp by lazy { setOfNotNull(packageName, "com.android.systemui", homePackage()) }
+    private fun homePackage() = packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
+
+    fun startRecording(onBoundary: ((com.tva.teachable.core.Boundary) -> Unit)? = null) {
+        recorder = Recorder(packageName, setOfNotNull("com.android.systemui", homePackage())).also {
+            it.start(); it.touchMode = true; it.onWindowChanged(front.first, front.second); it.onBoundaryReached = onBoundary
+        }
         catcher = TouchCatcher(this, ::onTeachTap) { scope.launch(recordLane) { recorder?.onSwipeUp() } }.also { it.show() }
         overlay?.raise() // the mic / Done panel stays above the catcher, so it keeps working normally
     }

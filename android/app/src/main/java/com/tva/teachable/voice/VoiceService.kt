@@ -164,7 +164,9 @@ class VoiceService : Service() {
 
     private fun startTeaching(m: JSONObject) {
         val svc = TvaAccessibilityService.instance ?: return AppState.log("Accessibility Service is not enabled")
-        teach = m; svc.startRecording(); AppState.teaching.value = true
+        // Reaching a payment/OTP/login screen ends the demonstration: it is saved up to there, as if "done" was said.
+        teach = m; svc.startRecording { b -> AppState.log("teach: reached the ${b.kind.name.lowercase()} screen, finishing"); finishTeaching() }
+        AppState.teaching.value = true
         AppState.status.value = "Do the task on screen, then say or tap Done"
         AppState.log("teach mode: ${m.optString("command")}")
     }
