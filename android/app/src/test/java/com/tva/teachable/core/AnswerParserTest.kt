@@ -72,4 +72,14 @@ class AnswerParserTest {
         assertEquals(Answer.Retry, a("done"))
         assertEquals(Answer.Stop, a("no thanks"))
     }
+
+    @Test fun aNewTaskSaidInAnswerIsANewCommandNotATap() {
+        // Seen live: a new task said while a question was open was read as an answer, so it could never be given.
+        assertEquals(Answer.NewCommand("Order a burger from McDonald's"), a("Order a burger from McDonald's"))
+        assertEquals(Answer.NewCommand("calculate 5 plus 5"), a("calculate 5 plus 5"))
+        assertEquals(Answer.NewCommand("okay, book a cab to the airport"), a("okay, book a cab to the airport"))
+        // A tap on a control is still a tap, even one captioned like a request.
+        assertEquals(Answer.Tap("order summary"), a("tap order summary"))
+        assertEquals(Answer.Tap("continue"), a("tap continue"))
+    }
 }

@@ -267,3 +267,14 @@ test('"thank you" said on its own is a sign-off, never a task to learn; a bare "
     assert.ok(!h.sent.some((m) => m.type === 'teach_start'), said);
   }
 });
+
+test('a run the user ended with a new task stays silent (the new command speaks); one they stopped says so', async () => {
+  const h = harness();
+  const flow = await teach(h, margheritaDemo);
+  h.clear();
+  await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'run_result', flowId: flow._id, success: false, stopped: true, redirected: true, utterance: 'x', steps: [] })));
+  assert.deepEqual(h.said(), []);
+  assert.ok(!h.logs.some((l) => l.kind === 'match'), 'not counted as a wrong match');
+  await h.s.onMessage(Buffer.from(JSON.stringify({ type: 'run_result', flowId: flow._id, success: false, stopped: true, utterance: 'x', steps: [] })));
+  assert.equal(h.said().at(-1), "Okay, I've stopped.");
+});

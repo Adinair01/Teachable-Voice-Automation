@@ -54,6 +54,10 @@ const runResult = z.object({
   declined: z.boolean().default(false),
   // The user answered a question with "done, thank you": they got where they wanted.
   finished: z.boolean().default(false),
+  // Ended by the user: the panel's Stop button or "stop" (stopped), or a new task said in answer to a question
+  // (redirected — that command follows straight away, so nothing is said for this run).
+  stopped: z.boolean().default(false),
+  redirected: z.boolean().default(false),
   handover: z.object({ kind: z.enum(HANDOVER_KINDS), reason: z.string().max(200) }).nullable().default(null),
   utterance: z.string().max(500).default(''),
   steps: z.array(z.object({ i: z.number(), ok: z.boolean(), llm: z.boolean().default(false), err: z.string().nullable().default(null) })).max(200).default([]),
@@ -314,11 +318,14 @@ export class Session {
     // A phrasing counts as correctly matched when the matched flow then ran to completion — or when the user
     // stopped it at a sensitive step, which says nothing about the match being wrong.
     // A handover also means the right flow ran: it got as far as the user's own credentials or payment.
-    if (r.utterance && !r.declined) await this.deps.log({ ...base, kind: 'match', success: r.success || !!r.handover });
+    // A run the user ended says nothing about whether the right flow was matched.
+    if (r.utterance && !r.declined && !r.stopped) await this.deps.log({ ...base, kind: 'match', success: r.success || !!r.handover });
+    if (r.redirected) return;
     // What happened, then (if the user's answers showed the flow is out of date) the offer to fix it — ONE spoken
     // message, because two back-to-back ones can cut each other off on the phone.
     let line;
     if (r.finished) line = GLAD;
+    else if (r.stopped) line = "Okay, I've stopped.";
     else if (r.handover) line = handoverLine(r.handover.kind);
     else if (r.declined) line = 'Okay, I stopped before that step.';
     else if (r.success) line = 'Done.';

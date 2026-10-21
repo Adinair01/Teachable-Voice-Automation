@@ -381,4 +381,26 @@ class AccuracyRegressionTest {
         assertTrue(r.steps.toString(), r.success)
         assertTrue(questions.toString(), questions.isEmpty())
     }
+
+    @Test fun `a new task said in answer ends the stuck run and is handed on as a command`() {
+        val r = runBlocking {
+            Replayer(Cart(), cfg = fast, asker = { "order a burger from McDonald's" })
+                .run(Flow("k", "d", z, listOf(FlowStep(StepType.TAP, Selector(text = "APPLY")))), emptyMap())
+        }
+        assertEquals("order a burger from McDonald's", r.newCommand)
+        assertTrue(r.stoppedByUser)
+        assertTrue(!r.success)
+    }
+
+    @Test fun `the Stop button ends the run as the next step starts, touching nothing more`() {
+        var stop = false
+        val screen = Screen(tree(row(0), row(1, text = "Next", click = true)))
+        val dev = object : Device by screen { override fun tap(tree: LiveTree, node: UiNode): Boolean { stop = true; return screen.tap(tree, node) } }
+        val r = runBlocking {
+            Replayer(dev, cfg = fast, stopRequested = { stop }).run(Flow("k", "d", z, List(4) { FlowStep(StepType.TAP, Selector(text = "Next")) }), emptyMap())
+        }
+        assertEquals("one tap, then the Stop pressed during it ends the run", 1, screen.tapped.size)
+        assertTrue(r.stoppedByUser)
+        assertEquals("you asked me to stop", r.steps.last().error)
+    }
 }

@@ -148,6 +148,14 @@ class VoiceService : Service() {
     // ---- confirmation (button or voice) ----
     fun answerConfirm(yes: Boolean) { confirm?.complete(yes) }
 
+    /** The panel's Stop button: answers an open question with "stop", otherwise stops the run as the next step starts. */
+    @Volatile private var stopRequested = false
+    fun stopRun() {
+        stopRequested = true
+        if (awaitingAnswer) answer?.complete("stop")
+        confirm?.complete(false)
+    }
+
     // ---- server messages ----
     /** A reply that arrives while the user is talking is not played over them. */
     private fun onAudio(bytes: ByteArray) {
@@ -211,9 +219,14 @@ class VoiceService : Service() {
         AppState.status.value = "Running: ${m.optString("utterance").ifBlank { flow.description }.take(60)}"
         if (BuildConfig.DEBUG) Log.d("TVA", "replay slots=$slots")
         val gate = ConfirmationGate { step, _ -> askConfirmation("${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc }}".trim()) }
-        val r = Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate, asker = StuckAsker(::askUser),
-            progress = { i, total, what -> AppState.status.value = "Step ${i + 1}/$total: $what" }).run(flow, slots)
+        stopRequested = false; AppState.running.value = true
+        val r = try {
+            Replayer(svc, BackendElementPicker(BackendConfig.url(this)), gate, asker = StuckAsker(::askUser),
+                progress = { i, total, what -> AppState.status.value = "Step ${i + 1}/$total: $what" }, stopRequested = { stopRequested }).run(flow, slots)
+        } finally { AppState.running.value = false }
         val outcome = when {
+            r.newCommand != null -> "Okay: ${r.newCommand.take(50)}"
+            r.stoppedByUser -> "Stopped"
             r.finishedByUser -> "Done — glad you got there"
             r.handover != null -> "Your turn"
             r.success -> "Done"
@@ -223,10 +236,13 @@ class VoiceService : Service() {
         AppState.status.value = outcome
         AppState.log("replay $outcome: ${r.steps.count { it.ok }}/${flow.steps.size}${r.handover?.let { " (${it.reason})" }.orEmpty()}")
         client.send(JSONObject().put("type", "run_result").put("flowId", m.optString("flowId")).put("success", r.success).put("declined", r.declined).put("finished", r.finishedByUser)
+            .put("stopped", r.stoppedByUser).put("redirected", r.newCommand != null)
             .put("handover", r.handover?.let { JSONObject().put("kind", it.kind.name.lowercase()).put("reason", it.reason) } ?: JSONObject.NULL)
             .put("utterance", m.optString("utterance")).put("steps", JSONArray().also { a ->
                 r.steps.forEach { a.put(JSONObject().put("i", it.index).put("ok", it.ok).put("llm", it.usedLlmFallback).put("err", it.error ?: JSONObject.NULL)) } })
             .put("corrections", JSONArray().also { a -> r.corrections.forEach { a.put(correctionJson(it)) } }))
+        // A new task said in answer to the run's question: the run has ended, so now it is an ordinary command.
+        r.newCommand?.let { client.send(JSONObject().put("type", "command").put("text", it)) }
     }
 
     private fun correctionJson(c: com.tva.teachable.core.Correction) = JSONObject()

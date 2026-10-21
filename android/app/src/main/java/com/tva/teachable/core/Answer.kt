@@ -19,6 +19,12 @@ sealed interface Answer {
         var then: List<String> = emptyList()
             internal set
     }
+    /**
+     * A new task said in answer to a question ("order a burger from McDonald's"): the stuck run ends and [text] is
+     * handled as a command. Before, everything said while a question was open counted as an answer, so the only way
+     * to give a new task was to say "stop" first — a trap anyone trying the assistant falls into.
+     */
+    data class NewCommand(val text: String) : Answer
     /** "Done, thank you", "that's it": the user is where they wanted to be. The run ends there, as a success. */
     data object Finished : Answer
     /** Nothing usable was said. */
@@ -55,6 +61,9 @@ object AnswerParser {
             "((all |i'?m |i am |we'?re |we are )?done( now)?( (thanks?|thank you)( (so much|a lot|very much))?)|(thanks?|thank you)( (so much|a lot|very much))?|that'?s (it|all|enough|perfect)( thanks?| thank you)?|that will do( thanks?| thank you)?|perfect( thanks?| thank you)?|all good( thanks?| thank you)?)$",
     )
 
+    // A request for a new task, never a tap on a control: those start with tap/press/click/select (LEAD) instead.
+    private val COMMAND = Regex("^(order|book|buy|get me|search for|find me|calculate|call|send|play|download|install|navigate to|take me to|turn (on|off)|show me|i want to|i'd like to|can you (order|book|buy|search|find|calculate|call|send|play|open|download))\\b")
+
     fun parse(raw: String): Answer {
         val spoken = raw.lowercase().replace(Regex("[\\p{P}&&[^'&]]"), " ").replace(Regex("\\s+"), " ").trim()
             .replace(REPEATED, "$1")
@@ -65,6 +74,7 @@ object AnswerParser {
         if (STOP.matches(t)) return Answer.Stop
         if (SKIP.matches(t)) return Answer.Skip
         if (RETRY.matches(t)) return Answer.Retry
+        if (COMMAND.containsMatchIn(t)) return Answer.NewCommand(raw.trim())
         val parts = t.split(CHAIN).map { it.trim() }.filter { it.isNotEmpty() }
         val first = caption(parts.first()) ?: return Answer.Unclear
         val rest = parts.drop(1).map { caption(it) ?: return Answer.Unclear }

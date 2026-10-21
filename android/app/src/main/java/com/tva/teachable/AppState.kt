@@ -14,6 +14,8 @@ object AppState {
     val connected = MutableStateFlow(false)
     val listen = MutableStateFlow(ListenMode.IDLE)
     val teaching = MutableStateFlow(false)
+    /** A replay is running (the panel then offers Stop). */
+    val running = MutableStateFlow(false)
     /** Non-null while a sensitive step waits for the user's yes/no. */
     val confirmPrompt = MutableStateFlow<String?>(null)
 

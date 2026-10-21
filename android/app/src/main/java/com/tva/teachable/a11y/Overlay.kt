@@ -76,6 +76,11 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
             // In teach mode this button is most of the panel: a drag on it moves the panel, a tap still means Done.
             setOnTouchListener { _, e -> onDragOrTap(e) { VoiceService.instance?.finishTeaching() } }
         }
+        // While a replay runs: stops it (or answers its open question with "stop"), so nobody needs the magic word.
+        val stop = Button(service).apply {
+            text = "■ Stop"; isAllCaps = false; visibility = View.GONE
+            setOnClickListener { VoiceService.instance?.stopRun() }
+        }
         val yes = Button(service).apply { text = "Yes"; isAllCaps = false; setOnClickListener { VoiceService.instance?.answerConfirm(true) } }
         val no = Button(service).apply { text = "No"; isAllCaps = false; setOnClickListener { VoiceService.instance?.answerConfirm(false) } }
         val confirmRow = LinearLayout(service).apply {
@@ -85,7 +90,7 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
         root = LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL; setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
             background = panelBg
-            addView(status); addView(mic); addView(done); addView(confirmRow)
+            addView(status); addView(mic); addView(stop); addView(done); addView(confirmRow)
             setOnTouchListener { _, e -> onDragOnly(e) } // the panel's own background is a handle too
         }
         lp = WindowManager.LayoutParams(
@@ -104,6 +109,7 @@ class Overlay(private val service: AccessibilityService, private val scope: Coro
             if (!dragging && (r - l != or_ - ol || b - t != ob - ot)) root.post { snap(persist = false) }
         }
 
+        scope.launch(Dispatchers.Main) { AppState.running.collect { stop.visibility = if (it) View.VISIBLE else View.GONE } }
         scope.launch(Dispatchers.Main) {
             var wasTeaching = false
             combine(AppState.status, AppState.teaching, AppState.confirmPrompt, AppState.listen) { s, t, c, l -> arrayOf(s, t, c, l) }

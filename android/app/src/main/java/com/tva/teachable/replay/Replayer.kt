@@ -76,6 +76,10 @@ data class RunResult(
     val questions: Int = 0,
     /** The user said they were where they wanted to be ("done, thank you") while being asked something. */
     val finishedByUser: Boolean = false,
+    /** The user answered a question with a new task (or pressed Stop): the run ended, and this is what to do now. */
+    val newCommand: String? = null,
+    /** The run was stopped by the user (the panel's Stop button, or "stop"), not by a failure. */
+    val stoppedByUser: Boolean = false,
 )
 
 class Replayer(
@@ -86,6 +90,8 @@ class Replayer(
     private val asker: StuckAsker? = null,
     /** Told as each step starts (index, total, what it does), so what is shown matches what is being done. */
     private val progress: ((Int, Int, String) -> Unit)? = null,
+    /** The panel's Stop button: checked as each step starts. */
+    private val stopRequested: () -> Boolean = { false },
 ) {
     private var appPackage = ""
     private var llmPicks = 0
@@ -112,6 +118,10 @@ class Replayer(
             runSteps(flow, slots, results) { current = it }
         } catch (e: AtBoundary) {
             done(e.boundary.kind == BoundaryKind.PAYMENT, results + handover(current, e.boundary), handover = e.boundary)
+        } catch (e: UserRedirected) {
+            val why = if (e.command != null) "you asked me to do something else" else "you asked me to stop"
+            RunResult(false, results + StepResult(current, false, error = why), corrections = corrections.toList(), questions = asked,
+                newCommand = e.command, stoppedByUser = true)
         } catch (e: UserFinished) {
             RunResult(true, results + StepResult(current, true, error = "you said that's it"), corrections = corrections.toList(), questions = asked, finishedByUser = true)
         }
@@ -120,6 +130,7 @@ class Replayer(
     private suspend fun runSteps(flow: Flow, slots: Map<String, String>, results: MutableList<StepResult>, at: (Int) -> Unit): RunResult {
         for ((i, step) in flow.steps.withIndex()) {
             at(i)
+            if (stopRequested()) throw UserRedirected(null)
             progress?.invoke(i, flow.steps.size, describe(step, slots))
             if (now() - runStart - userTime > cfg.runCapMs) {
                 val err = "This has taken over ${cfg.runCapMs / 60_000} minutes of trying, so I've stopped at step ${i + 1} instead of carrying on."
@@ -160,6 +171,8 @@ class Replayer(
     private class AtBoundary(val boundary: Boundary) : Exception()
     /** The user answered a question with "done, thank you": they are where they wanted to be. */
     private class UserFinished : Exception()
+    /** The user answered a question with a new task, or pressed Stop ([command] null). */
+    private class UserRedirected(val command: String?) : Exception()
 
     /**
      * Every tap and every typed text goes through here. The screen is read afresh and, if it has become a payment /
@@ -599,8 +612,9 @@ class Replayer(
                 ?: return r.copy(error = "I didn't hear back, so I stopped", cause = null)
             note = ""
             when (val a = AnswerParser.parse(reply)) {
-                Answer.Stop -> return r.copy(error = "you asked me to stop", cause = null)
+                Answer.Stop -> throw UserRedirected(null)
                 Answer.Finished -> throw UserFinished()
+                is Answer.NewCommand -> throw UserRedirected(a.text)
                 Answer.Unclear -> note = "Sorry, I didn't understand that."
                 Answer.Skip -> {
                     if (step.slotRef != null || step.type != StepType.TAP && step.type != StepType.TYPE) {
@@ -658,6 +672,7 @@ class Replayer(
             when (val a = AnswerParser.parse(reply)) {
                 Answer.Stop, Answer.Skip -> return null
                 Answer.Finished -> throw UserFinished()
+                is Answer.NewCommand -> throw UserRedirected(a.text)
                 Answer.Unclear -> note = "Sorry, I didn't understand that."
                 Answer.Retry -> reachedCheckout()?.let { return it } // they took me there themselves
                 is Answer.Tap -> when (val t = tapNamed(a)) {
@@ -821,7 +836,7 @@ class Replayer(
             StuckCause.CART_CONFLICT -> "Say add another, or leave it."
             StuckCause.REPLACE_PROMPT -> "Sort your cart out yourself and say done, or say stop."
             StuckCause.WRONG_APP -> "Take me back to the app and say done, or say stop."
-            else -> "Tell me what to tap, say skip to leave this step out, or say stop."
+            else -> "Tell me what to tap, say skip to leave this step out, say stop, or just tell me something else to do."
         }
         return listOf(note, progress, r.error.orEmpty(), how).filter { it.isNotBlank() }.joinToString(" ")
     }
