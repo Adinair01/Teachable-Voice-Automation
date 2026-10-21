@@ -86,17 +86,29 @@ class Recorder(private val ownPackage: String, private val ignoredPackages: Set<
 
     @Synchronized fun stop(): List<FlowStep> { settleUndo(); flushType(); return steps.toList() }
 
+    /**
+     * Every screen read here runs on the APP's main thread (that is how accessibility reads work), so the recorder reads
+     * as little as it can: a click event is ignored in touch mode (the TouchCatcher already recorded that tap), and
+     * typing reads the screen once per field — for the credential check — instead of on every keystroke.
+     */
     @Synchronized fun onEvent(e: AccessibilityEvent) {
+        val type = e.eventType
+        if (type != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && type != AccessibilityEvent.TYPE_VIEW_CLICKED && type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (type == AccessibilityEvent.TYPE_VIEW_CLICKED && touchMode) return
         val pkg = e.packageName?.toString().orEmpty()
-        if (BuildConfig.DEBUG) Log.d("TVA", "rec event ${AccessibilityEvent.eventTypeToString(e.eventType)} pkg=$pkg src=${e.source != null} text=${e.text}")
         if (ignored(pkg)) return
         // The demo's launch step is the first real app the user touches (launcher taps are ignored by design).
         if (!launched) { steps += FlowStep(StepType.LAUNCH, value = pkg); launched = true }
-        when (e.eventType) {
+        when (type) {
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED, AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                val screen = UiTreeReader.readLive(e.source?.window?.root).nodes
-                if (onBoundary(screen)) { pendingType = null; return }
-                if (e.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) onText(e) else if (!touchMode) onClick(e, screen)
+                val sameField = type == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && pendingType != null &&
+                    e.source?.let { selectorOf(it) } == pendingType?.selector
+                if (!sameField) {
+                    val screen = UiTreeReader.readLive(e.source?.window?.root).nodes
+                    if (onBoundary(screen)) { pendingType = null; return }
+                    if (type == AccessibilityEvent.TYPE_VIEW_CLICKED) { onClick(e, screen); return }
+                }
+                onText(e)
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 onWindowChanged(pkg, e.className?.toString().orEmpty())

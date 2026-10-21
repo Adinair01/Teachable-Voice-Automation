@@ -1,6 +1,8 @@
 package com.tva.teachable.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TapTargetTest {
@@ -32,5 +34,13 @@ class TapTargetTest {
             UiNode(3, 1, "z", "", "", "1 item added", "", "", false, false, false, false),
         )
         assertEquals(2, SelectorMatcher.find(list, Selector(resourceId = "z:id/container", contentDesc = "1 item added"))?.index)
+    }
+
+    @Test fun aSnapshotStandsInForTheScreenOnlyWhenTheControlUnderTheFingerIsUnchanged() {
+        val add = UiNode(5, 3, "z", "z:id/add", "", "ADD", "android.view.View", "800 400 1000 500", true, false, false, false)
+        assertTrue(TapTarget.sameControl(add, add.copy(index = 9, depth = 4)))     // same control, read on another path
+        assertFalse(TapTarget.sameControl(add, add.copy(bounds = "800 300 1000 400"))) // the list scrolled
+        assertFalse(TapTarget.sameControl(add, add.copy(contentDesc = "")))            // ADD became a stepper
+        assertFalse(TapTarget.sameControl(add, add.copy(resourceId = "z:id/other")))   // a different control
     }
 }

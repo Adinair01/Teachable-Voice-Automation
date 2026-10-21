@@ -24,6 +24,14 @@ object TapTarget {
         return Selector(resourceId = n.resourceId, text = text, contentDesc = desc, className = n.className)
     }
 
+    /**
+     * Is [live] (read just now, under the finger) the same control as [snapped] (from a snapshot of the screen)? Same id,
+     * class, place and caption: only then may the snapshot stand in for a full read of the screen at tap time.
+     */
+    fun sameControl(snapped: UiNode, live: UiNode): Boolean =
+        snapped.resourceId == live.resourceId && snapped.className == live.className && snapped.bounds == live.bounds &&
+            snapped.text == live.text && snapped.contentDesc == live.contentDesc
+
     private fun contains(n: UiNode, x: Int, y: Int): Boolean {
         val b = n.bounds.split(' ').mapNotNull { it.toIntOrNull() }
         return b.size == 4 && x >= b[0] && x < b[2] && y >= b[1] && y < b[3]

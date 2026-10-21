@@ -1,5 +1,11 @@
 package com.tva.teachable.a11y
 
+import com.tva.teachable.core.TapTarget
+import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import android.os.SystemClock
 import android.os.Build
 import android.accessibilityservice.AccessibilityService
 import android.content.BroadcastReceiver
@@ -54,11 +60,18 @@ class TvaAccessibilityService : AccessibilityService(), Device {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val pkg = event.packageName?.toString().orEmpty()
+        val type = event.eventType
         // App windows only: the launcher and System UI also report window changes as they go to the background.
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg.isNotEmpty() && pkg !in notAnApp) {
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg.isNotEmpty() && pkg !in notAnApp) {
             front = pkg to event.className?.toString().orEmpty()
         }
-        recorder?.onEvent(event)
+        val r = recorder ?: return
+        if (type != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED && type != AccessibilityEvent.TYPE_VIEW_CLICKED && type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        // Off the main thread, in order with the taps: the recorder's screen reads used to run HERE, on the thread that
+        // also handles the touch overlay and the panel, so the next touch waited for them.
+        @Suppress("DEPRECATION") val copy = AccessibilityEvent.obtain(event)
+        scope.launch(recordLane) { r.onEvent(copy) }
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) refreshSnapshotSoon(SNAP_AFTER_WINDOW_MS)
     }
 
     /** While teaching, Back is observed (never consumed): right after a tap it undoes that tap (see Recorder.onBack). */
@@ -106,25 +119,100 @@ class TvaAccessibilityService : AccessibilityService(), Device {
         recorder = Recorder(packageName, setOfNotNull("com.android.systemui", homePackage())).also {
             it.start(); it.touchMode = true; it.onWindowChanged(front.first, front.second); it.onBoundaryReached = onBoundary
         }
+        snapshot = null
+        refreshSnapshotSoon(0)
         catcher = TouchCatcher(this, ::onTeachTap) { scope.launch(recordLane) { recorder?.onSwipeUp() } }.also { it.show() }
         overlay?.raise() // the mic / Done panel stays above the catcher, so it keeps working normally
     }
     fun stopRecording(): List<FlowStep> {
         catcher?.hide(); catcher = null
+        snapJob?.cancel(); snapshot = null
         return recorder?.stop().also { recorder = null }.orEmpty()
     }
 
     /** Reads the screen BEFORE the tap is delivered, records the element under the finger, then lets the tap through. */
     private fun onTeachTap(x: Int, y: Int, deliver: () -> Unit) {
         scope.launch(recordLane) {
-            val t0 = android.os.SystemClock.uptimeMillis()
-            try { if (!overKeyboardOrSystemUi(x, y)) recorder?.onUserTap(tree().nodes, x, y) }
+            val t0 = SystemClock.uptimeMillis()
+            var how = "skipped"
+            try {
+                if (!overKeyboardOrSystemUi(x, y)) {
+                    val fast = fromSnapshot(x, y)
+                    how = if (fast != null) "snapshot" else "full read"
+                    val screen = fast ?: tree().nodes.also { snapshot = Snapshot(it) }
+                    recorder?.onUserTap(screen, x, y)
+                }
+            }
             catch (e: Exception) { Log.e(TAG, "teach: could not record tap", e) }
             finally {
-                if (BuildConfig.DEBUG) Log.d(TAG, "teach: tap held ${android.os.SystemClock.uptimeMillis() - t0} ms before delivery")
+                if (BuildConfig.DEBUG) Log.d(TAG, "teach: tap held ${SystemClock.uptimeMillis() - t0} ms before delivery ($how)")
                 deliver()
+                refreshSnapshotSoon(SNAP_AFTER_TAP_MS)
             }
         }
+    }
+
+    // ---- teach-mode snapshot: a tap need not wait for a full read of the screen ----
+
+    /**
+     * The screen as last read while teaching. Reading Zomato's whole screen takes 0.4-0.8 s (measured), and a tap must be
+     * recorded against the screen as it was BEFORE the tap reached the app — so every tap used to wait that long. The
+     * snapshot is refreshed in the background once the screen has had time to settle after a tap or a window change.
+     */
+    private class Snapshot(val nodes: List<UiNode>)
+    @Volatile private var snapshot: Snapshot? = null
+    private var snapJob: Job? = null
+    @OptIn(ExperimentalCoroutinesApi::class) private val snapLane = Dispatchers.Default.limitedParallelism(1)
+
+    private fun refreshSnapshotSoon(afterMs: Long) {
+        if (recorder == null) return
+        snapJob?.cancel()
+        snapJob = scope.launch(snapLane) {
+            delay(afterMs)
+            val nodes = tree().nodes
+            if (recorder != null && isActive) snapshot = Snapshot(nodes)
+        }
+    }
+
+    /**
+     * The snapshot, if it still holds for this tap: the control under the finger, read live along the path to the point
+     * (a few dozen nodes, not the whole screen), must be the very control the snapshot has there — same id, class,
+     * bounds and caption. Anything else (a scroll, a new page, a changed caption) means a full read, as before.
+     */
+    private fun fromSnapshot(x: Int, y: Int): List<UiNode>? {
+        val snap = snapshot ?: return null
+        val expected = TapTarget.at(snap.nodes, x, y) ?: return null
+        val live = liveControlAt(x, y) ?: return null
+        val same = TapTarget.sameControl(expected, live)
+        if (!same && BuildConfig.DEBUG) Log.d(TAG, "teach: snapshot not used - it has ${expected.resourceId}|${expected.text.take(20)}|${expected.bounds}, live ${live.resourceId}|${live.text.take(20)}|${live.bounds}")
+        return snap.nodes.takeIf { same }
+    }
+
+    /**
+     * The control under (x, y), read live by the SAME rule as TapTarget.at — the smallest clickable node holding the point
+     * in the top-most app window holding it — but visiting only branches whose bounds hold the point: a few dozen nodes
+     * instead of the whole screen. Every such branch is visited, not just the one drawn on top: Zomato keeps full-screen
+     * layers (the cart's backdrop) that hold every point.
+     */
+    private fun liveControlAt(x: Int, y: Int): UiNode? {
+        val active = rootInActiveWindow ?: return null
+        val roots = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }.mapNotNull { it.root }
+            .filter { it.packageName == active.packageName }.ifEmpty { listOf(active) }
+        val r = Rect()
+        val holds = { n: AccessibilityNodeInfo -> n.getBoundsInScreen(r); r.contains(x, y) }
+        val root = roots.firstOrNull(holds) ?: return null
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = Long.MAX_VALUE
+        val stack = ArrayDeque(listOf(root))
+        while (stack.isNotEmpty()) {
+            val n = stack.removeLast()
+            n.getBoundsInScreen(r)
+            if (!r.contains(x, y)) continue
+            val area = r.width().toLong() * r.height()
+            if (n.isClickable && area < bestArea) { best = n; bestArea = area }
+            for (i in 0 until n.childCount) n.getChild(i)?.let(stack::addLast)
+        }
+        return best?.let { UiTreeReader.toUiNode(it) }
     }
 
     // Keyboard keys are typing (captured as text), status bar / notification shade are not part of the task.
@@ -212,6 +300,9 @@ class TvaAccessibilityService : AccessibilityService(), Device {
     }
 
     companion object {
+        /** Settle time before the snapshot is re-read: after a tap the app reacts, after a window change it lays out. */
+        const val SNAP_AFTER_TAP_MS = 700L
+        const val SNAP_AFTER_WINDOW_MS = 500L
         private const val TAG = "TVA"
         @Volatile var instance: TvaAccessibilityService? = null
     }
