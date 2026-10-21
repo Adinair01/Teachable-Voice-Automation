@@ -225,6 +225,9 @@ class Replayer(
             t.nodes.firstOrNull()?.packageName == pkg && (!wasInFront || signature(t) != beforeSig)
         }
         // Even a cold start paints in stages; the first step must not read a half-built screen.
+        // The app was already in front and restarted onto a screen identical to the one before (a calculator still
+        // showing "1+1 = 2"): it IS in front, there is just nothing that changed. Seen live; asking about it was wrong.
+        if (!arrived && wasInFront && device.tree().nodes.firstOrNull()?.packageName == pkg) { awaitStable(); return finish(i, step, true, slots = slots) }
         if (!arrived) {
             // Seen live: the phone had locked itself, so the app could not come to the front. Say so and ask.
             return StepResult(

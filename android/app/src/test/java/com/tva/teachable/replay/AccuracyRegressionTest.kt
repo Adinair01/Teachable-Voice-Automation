@@ -372,4 +372,13 @@ class AccuracyRegressionTest {
         assertEquals("the cart's Margherita stepper (node 121)", 121, stepper?.number?.index)
         assertNotNull(com.tva.teachable.core.ScreenGuard.readyToPay(nodes))
     }
+
+    @Test fun `relaunching an app already in front on an identical screen is not "never came to the front"`() {
+        // Seen live: Calculator in front showing "1+1 = 2" restarted onto the very same screen, and the run asked.
+        val screen = Screen(tree(row(0), row(1, text = "2"), row(1, text = "+", click = true)))
+        val questions = ArrayList<String>()
+        val r = replay(screen, FlowStep(StepType.LAUNCH, value = z), FlowStep(StepType.TAP, Selector(text = "+")), questions = questions)
+        assertTrue(r.steps.toString(), r.success)
+        assertTrue(questions.toString(), questions.isEmpty())
+    }
 }
