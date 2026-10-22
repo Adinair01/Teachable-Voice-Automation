@@ -10,6 +10,10 @@ const schema = z.object({
   // Tried in order after GROQ_MODEL when it errors, times out or answers with something unusable. GPT models only
   // (2026-10-22, Groq developer plan): the larger GPT-OSS is the backup for the smaller one.
   GROQ_FALLBACK_MODELS: z.string().default('openai/gpt-oss-120b'),
+  // Choosing an element on a screen (a stuck step, or what the user meant by an answer) is the hardest judgement made,
+  // so it goes to the larger model first. Measured live 2026-10-22 on the same screen and answer: 120b right 3/3,
+  // 20b right 1/3 (once nothing, once a wrong icon).
+  GROQ_PICK_MODELS: z.string().default('openai/gpt-oss-120b,openai/gpt-oss-20b'),
   LOG_LEVEL: z.string().default('info'),
 });
 
@@ -27,4 +31,5 @@ export const modelChain = (primary, fallbacks) => [
 export const config = {
   ...parsed.data,
   GROQ_MODEL_CHAIN: modelChain(parsed.data.GROQ_MODEL, parsed.data.GROQ_FALLBACK_MODELS),
+  GROQ_PICK_CHAIN: modelChain('', parsed.data.GROQ_PICK_MODELS),
 };

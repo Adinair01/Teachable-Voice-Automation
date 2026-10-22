@@ -11,11 +11,21 @@ import org.json.JSONObject
 /** LLM fallback when a step's selector finds nothing. Returns the chosen node index, or null. */
 fun interface ElementPicker {
     suspend fun pick(step: FlowStep, slots: Map<String, String>, nodes: List<UiNode>): Int?
+
+    /**
+     * The same choice with more to go on: [intent] in words ("tap the control after opening Domino's", or "user said: you
+     * can search it here") and [context] (the task and the steps around this one). [step] is null for a user's answer.
+     */
+    suspend fun pickFor(step: FlowStep?, intent: String, context: String, slots: Map<String, String>, nodes: List<UiNode>): Int? =
+        step?.let { pick(it, slots, nodes) }
 }
 
 /** Calls the backend, which asks Groq. Only compact, password-redacted node fields leave the device. */
 class BackendElementPicker(private val baseUrl: String) : ElementPicker {
-    override suspend fun pick(step: FlowStep, slots: Map<String, String>, nodes: List<UiNode>): Int? {
+    override suspend fun pick(step: FlowStep, slots: Map<String, String>, nodes: List<UiNode>): Int? =
+        pickFor(step, "${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc.ifEmpty { step.selector.resourceId } }}".trim(), "", slots, nodes)
+
+    override suspend fun pickFor(step: FlowStep?, intent: String, context: String, slots: Map<String, String>, nodes: List<UiNode>): Int? {
         val compact = JSONArray()
         nodes.filter { !it.password && (it.text.isNotEmpty() || it.contentDesc.isNotEmpty() || it.resourceId.isNotEmpty()) }
             .take(MAX_NODES).forEach {
@@ -24,7 +34,7 @@ class BackendElementPicker(private val baseUrl: String) : ElementPicker {
                     .put("cls", it.className.substringAfterLast('.')).put("click", it.clickable).put("edit", it.editable))
             }
         val body = JSONObject()
-            .put("intent", "${step.type.name.lowercase()} ${step.selector.text.ifEmpty { step.selector.contentDesc.ifEmpty { step.selector.resourceId } }}".trim())
+            .put("intent", intent.take(300)).put("context", context.take(800))
             .put("slots", JSONObject(slots)).put("nodes", compact)
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { post(body) }
     }

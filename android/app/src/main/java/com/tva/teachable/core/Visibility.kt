@@ -31,6 +31,7 @@ object Visibility {
         fun layersOf(s: Int): List<IntArray> = layers.getOrPut(s) {
             RowContext.subtree(nodes, nodes[s]).filter { it.clickable && area(box(it)) >= screen * LAYER_SHARE }.map(::box)
         }
+        val decided = BooleanArray(nodes.size) { out[it] }
         for (n in nodes) {
             if (out[n.index]) continue
             val b = box(n)
@@ -43,7 +44,19 @@ object Visibility {
                 a = p
             }
         }
-        return out
+        return sane(nodes, out, decided)
+    }
+
+    /**
+     * [hidden], unless it would leave nothing readable on screen while there is readable text in the tree: then the
+     * covering "layer" was a transparent or loading overlay, not a page, and only Android's own visibility is used.
+     * Seen live: a Zomato step got "This screen shows nothing I can read" and could find nothing, even what was named.
+     */
+    private fun sane(nodes: List<UiNode>, hidden: BooleanArray, decided: BooleanArray): BooleanArray {
+        val readable = { n: UiNode -> !n.password && (n.text.isNotBlank() || n.contentDesc.isNotBlank()) }
+        val anyLeft = nodes.any { !hidden[it.index] && readable(it) }
+        val anyAtAll = nodes.any { !decided[it.index] && readable(it) }
+        return if (!anyLeft && anyAtAll) decided else hidden
     }
 
     /** The nodes the user can see, in tree order. */

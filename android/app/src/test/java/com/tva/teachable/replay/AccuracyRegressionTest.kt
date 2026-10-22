@@ -418,4 +418,72 @@ class AccuracyRegressionTest {
         // Two different listings sharing the same number of words: no guess.
         assertNull(added(shop(ultra, "Samsung Galaxy S25 Edge 5G AI Smartphone (Silver, 12GB RAM, 256GB Storage)"), "S25 256GB"))
     }
+
+    // ---- demo-day fixes (2026-10-22): an overlay that hid everything, free-form answers, unlabelled icons, a popup at the end ----
+
+    @Test fun `a blank clickable overlay drawn on top does not hide every readable thing on the screen`() {
+        val nodes = listOf(
+            UiNode(0, 0, z, "", "", "", "", "0 0 1080 2400", false, false, false, false),
+            UiNode(1, 1, z, "", "", "", "", "0 0 1080 2400", false, false, false, false, 1),
+            UiNode(2, 2, z, "", "Domino's Pizza", "", "", "0 100 1080 200", false, false, false, false),
+            UiNode(3, 2, z, "z:id/button1", "", "", "", "900 100 1000 200", true, false, false, false),
+            UiNode(4, 1, z, "", "", "", "", "0 0 1080 2400", true, false, false, false, 9), // loading overlay, no content
+        )
+        val seen = com.tva.teachable.core.Visibility.visible(nodes)
+        assertTrue(seen.any { it.text == "Domino's Pizza" })
+        assertTrue(com.tva.teachable.core.ScreenSummary.of(nodes).contains("Domino's Pizza"))
+    }
+
+    /** A picker that answers only the context-aware call, as the backend does, by caption or id. */
+    private fun modelPicking(want: (String) -> String) = object : ElementPicker {
+        val asked = ArrayList<String>()
+        override suspend fun pick(step: FlowStep, slots: Map<String, String>, nodes: List<UiNode>): Int? = null
+        override suspend fun pickFor(step: FlowStep?, intent: String, context: String, slots: Map<String, String>, nodes: List<UiNode>): Int? {
+            asked += "$intent | $context"
+            val target = want(intent)
+            return nodes.firstOrNull { it.text == target || it.contentDesc == target || it.resourceId.endsWith(target) }?.index
+        }
+    }
+
+    @Test fun `a free-form answer ("you can search it here") is worked out by the model and tapped`() {
+        val screen = Screen(tree(row(0), row(1, text = "Domino's Pizza"), row(1, "$z:id/search_icon", click = true)))
+        val model = modelPicking { if (it.startsWith("user said:")) "search_icon" else "" }
+        runBlocking {
+            Replayer(screen, model, cfg = fast, asker = { "You can search it here" })
+                .run(Flow("k", "Order a pizza", z, listOf(FlowStep(StepType.TAP, Selector(text = "Search in menu")))), emptyMap())
+        }
+        assertEquals(listOf(""), screen.tapped) // the unlabelled search icon
+        assertTrue(model.asked.toString(), model.asked.any { it.startsWith("user said: You can search it here") })
+    }
+
+    @Test fun `a step on an unlabelled icon is worked out from the task around it, not refused`() {
+        val screen = Screen(tree(row(0), row(1, text = "Domino's Pizza", click = true), row(1, "$z:id/menu_search", click = true), row(1, "$z:id/edittext", click = true)))
+        val model = modelPicking { if (it.contains("button1")) "menu_search" else "" }
+        val questions = ArrayList<String>()
+        val r = runBlocking {
+            Replayer(screen, model, cfg = fast, asker = { q -> questions += q.spoken; null }).run(Flow("k", "Order margherita pizza from Domino's", z, listOf(
+                FlowStep(StepType.TAP, Selector(text = "{{restaurant}}"), slotRef = "restaurant"),
+                FlowStep(StepType.TAP, Selector(resourceId = "$z:id/button1")),
+            )), mapOf("restaurant" to "Domino's Pizza"))
+        }
+        assertTrue(questions.toString(), questions.isEmpty())
+        assertTrue(r.steps.toString(), r.success)
+        assertTrue(model.asked.toString(), model.asked.any { it.contains("Order margherita pizza from Domino's") && it.contains("Just before: tapping Domino's Pizza") })
+    }
+
+    @Test fun `a popup over the cart at the end is closed, and the run is recognised as at the cart`() {
+        var popup = true
+        val dev = object : Device {
+            override fun tree() = LiveTree(tree(*(listOf(row(0), row(1, text = "Bill details"), row(1, text = "Select address at next step", click = true)) +
+                if (popup) listOf(row(1, text = "Dining voucher unlocked!"), row(1, text = "Got it", click = true)) else emptyList()).toTypedArray()), emptyList())
+            override fun launch(packageName: String) = true
+            override fun tap(tree: LiveTree, node: UiNode): Boolean { if (node.text == "Got it") popup = false; return true }
+            override fun type(tree: LiveTree, node: UiNode, value: String) = true
+            override fun scroll(tree: LiveTree) = false
+            override fun back() = true
+        }
+        val r = runBlocking { Replayer(dev, cfg = fast, asker = { null }).run(Flow("k", "d", z, listOf(FlowStep(StepType.SET_QUANTITY, slotRef = "quantity"))), emptyMap()) }
+        assertTrue(r.steps.toString(), r.success)
+        assertEquals(com.tva.teachable.core.BoundaryKind.PAYMENT, r.handover?.kind)
+    }
 }

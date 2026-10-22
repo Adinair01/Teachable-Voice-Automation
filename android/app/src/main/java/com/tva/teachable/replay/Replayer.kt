@@ -109,7 +109,12 @@ class Replayer(
     private fun within(ms: Long) = minOf(ms, (deadline - now()).coerceAtLeast(0))
     private fun outOfTime() = now() >= deadline
 
+    /** The flow being run: its description and neighbouring steps are the context a model gets for a step it must guess. */
+    private var currentFlow: Flow? = null
+    private var currentSlots: Map<String, String> = emptyMap()
+
     suspend fun run(flow: Flow, slots: Map<String, String>): RunResult {
+        currentFlow = flow; currentSlots = slots
         appPackage = flow.appPackage; llmPicks = 0; asked = 0; corrections.clear(); lastTyped = null
         runStart = now(); userTime = 0
         val results = ArrayList<StepResult>()
@@ -159,6 +164,10 @@ class Replayer(
         // A popup (a coupon offer) can hide the pay bar; the flow still ended where it was taught to stop, before paying.
         var handover = ScreenGuard.screen(end) ?: ScreenGuard.readyToPay(end)
             ?: if (ordering) poll(cfg.waitMs) { ScreenGuard.readyToPay(it.nodes) } else null
+        if (ordering && handover == null && passInterstitial(Interruptions.DISMISSAL)) {
+            // A popup over the cart ("Dining voucher unlocked! Got it", seen live) hid it: close it and look again.
+            handover = poll(cfg.waitMs) { ScreenGuard.screen(it.nodes) ?: ScreenGuard.readyToPay(it.nodes) }
+        }
         if (ordering && handover == null) {
             // Ran out of steps short of the cart: the demonstration stopped early. Ask how to get there, don't go quiet.
             handover = askToReachCart(flow, slots, results)
@@ -330,12 +339,15 @@ class Replayer(
         // changing under the assistant ends in a question instead of a string of guesses.
         if (found == null && picker != null && llmPicks < MAX_LLM_PICKS && within(Long.MAX_VALUE) >= MIN_PICK_MS) {
             val tree = device.tree()
+            // Only what the user can see is offered, with what the task is and what happens around this step: enough for
+            // a model to work out an icon with no label (Zomato's in-restaurant search, id "button1").
+            val seen = Visibility.visible(tree.nodes)
             // A slow model must not hold the question back: whatever is left of the budget, and no more.
-            val idx = withTimeoutOrNull(within(Long.MAX_VALUE)) { picker.pick(step, slots, tree.nodes) }
+            val idx = withTimeoutOrNull(within(Long.MAX_VALUE)) { picker.pickFor(step, intentOf(i, step, sel), contextOf(i), slots, seen) }
             // A guess must never be the one that throws the user's cart or data away ("Replace", "Clear").
             val guess = tree.nodes.getOrNull(idx ?: -1)
             val accepted = guess?.takeUnless { CartState.DESTRUCTIVE.containsMatchIn(it.text + " " + it.contentDesc) }
-                ?.takeIf { plausible(step, sel, it) }
+                ?.takeIf { plausible(step, sel, it) || (unlabelled(step) && it.clickable && ScreenGuard.action(tree.nodes, it) == null) }
             // A guessed tap always leaves a trace: what was asked for, what the model offered, and whether it was used.
             android.util.Log.i("TVA", "replay: llm pick for ${targetLabel(step, sel)} -> " +
                 (guess?.let { "\"${it.text.ifBlank { it.contentDesc }.take(40)}\" (${if (accepted != null) "used" else "refused"})" } ?: "nothing"))
@@ -611,7 +623,7 @@ class Replayer(
             val reply = ask(Stuck(i, cause, spoken(r, cause, done, total, note)))
                 ?: return r.copy(error = "I didn't hear back, so I stopped", cause = null)
             note = ""
-            when (val a = AnswerParser.parse(reply)) {
+            when (val a = understood(reply)) {
                 Answer.Stop -> throw UserRedirected(null)
                 Answer.Finished -> throw UserFinished()
                 is Answer.NewCommand -> throw UserRedirected(a.text)
@@ -628,7 +640,7 @@ class Replayer(
                     r = if (cause == StuckCause.CART_CONFLICT) addAnother(i, step, slots) else runStep(i, step, next, slots)
                     if (r.ok || r.cause == null) return r
                 }
-                is Answer.Tap -> when (val t = tapNamed(a)) {
+                is Answer.Tap -> when (val t = tapNamed(a, reply)) {
                     is Named.Refused -> note = t.why
                     is Named.Boundary -> return handover(i, t.boundary)
                     is Named.Tapped -> {
@@ -669,13 +681,13 @@ class Replayer(
             ).filter { it.isNotBlank() }.joinToString(" ")
             val reply = ask(Stuck(flow.steps.size, StuckCause.MISSING_TARGET, spoken)) ?: return null
             note = ""
-            when (val a = AnswerParser.parse(reply)) {
+            when (val a = understood(reply)) {
                 Answer.Stop, Answer.Skip -> return null
                 Answer.Finished -> throw UserFinished()
                 is Answer.NewCommand -> throw UserRedirected(a.text)
                 Answer.Unclear -> note = "Sorry, I didn't understand that."
                 Answer.Retry -> reachedCheckout()?.let { return it } // they took me there themselves
-                is Answer.Tap -> when (val t = tapNamed(a)) {
+                is Answer.Tap -> when (val t = tapNamed(a, reply)) {
                     is Named.Refused -> note = t.why
                     is Named.Boundary -> return t.boundary
                     is Named.Tapped -> {
@@ -693,7 +705,35 @@ class Replayer(
     }
 
     /** Puts a question to the user; the time spent waiting for them does not count against the run's cap. */
+    /**
+     * What the user meant, worked out by the model from their own words and the screen they can see, when no caption on
+     * screen matches what they said. The same guards as any tap apply to whatever it picks (see [tapNamed]).
+     */
+    private suspend fun modelPick(said: String): Pair<LiveTree, UiNode>? {
+        val p = picker ?: return null
+        val tree = device.tree()
+        val seen = Visibility.visible(tree.nodes)
+        val context = "The assistant was running \"${currentFlow?.description.orEmpty()}\" and asked the user: \"${lastQuestion.take(300)}\""
+        val idx = withTimeoutOrNull(MODEL_ANSWER_MS) { p.pickFor(null, "user said: $said", context, currentSlots, seen) } ?: return null
+        val node = tree.nodes.getOrNull(idx) ?: return null
+        android.util.Log.i("TVA", "replay: model read \"$said\" as \"${node.text.ifBlank { node.contentDesc }.take(40)}\" (${node.resourceId.substringAfterLast('/')})")
+        return tree to node
+    }
+
+    /** The last question put to the user, for the model when it has to work out what their answer meant. */
+    private var lastQuestion = ""
+
+    /**
+     * The reply as an answer. A reply the closed vocabulary cannot read ("you can search it here") is not given up on
+     * when a model is available: it is treated as a request to tap something, which the model then picks from the screen.
+     */
+    private fun understood(reply: String): Answer {
+        val a = AnswerParser.parse(reply)
+        return if (a == Answer.Unclear && picker != null && reply.isNotBlank()) Answer.Tap(reply.trim().lowercase()) else a
+    }
+
     private suspend fun ask(q: Stuck): String? {
+        lastQuestion = q.spoken
         val t = now()
         try { return asker!!.ask(q) } finally { userTime += now() - t }
     }
@@ -740,10 +780,14 @@ class Replayer(
      * screen the previous one led to. Every one goes through the same checks as any tap: found on screen (scrolling if
      * needed), never destructive, never a payment commit. The first one's caption and selector are returned.
      */
-    private suspend fun tapNamed(a: Answer.Tap): Named {
+    private suspend fun tapNamed(a: Answer.Tap, reply: String = a.spoken): Named {
         var first: Named.Tapped? = null
         for ((k, caption) in (listOf(a.caption) + a.then).withIndex()) {
-            val located = locateNamed(caption, if (k == 0) a.spoken else caption)
+            val spoken = if (k == 0) a.spoken else caption
+            // On the screen as it is first, then the model on that SAME screen, and only then scrolling for the name:
+            // scrolling first moved what the user meant out of view before the model was asked (seen live).
+            val here = device.tree().let { t -> answerTarget(t.nodes, caption, spoken)?.let { t to it } }
+            val located = here ?: modelPick(if (k == 0) reply else caption) ?: locateNamed(caption, spoken)
             val prefix = first?.let { "I tapped \"${it.caption}\", but " }.orEmpty()
             val (tree, node) = located ?: return Named.Refused("${prefix}I can't see \"$caption\" on this screen.")
             val shown = node.text.ifBlank { node.contentDesc }.ifBlank { caption }
@@ -870,8 +914,33 @@ class Replayer(
 
     private fun words(s: String) = s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 3 }.toSet()
 
-    private fun targetLabel(step: FlowStep, sel: Selector): String =
-        (sel.text.ifBlank { sel.contentDesc }.ifBlank { step.selector.resourceId.substringAfterLast('/') }).let { if (it.isBlank()) "the next control" else "\"$it\"" }
+    private fun targetLabel(step: FlowStep, sel: Selector): String {
+        val caption = sel.text.ifBlank { sel.contentDesc }
+        if (caption.isNotBlank()) return "\"$caption\""
+        // A control with no caption: say where it sits in the task instead of reading out an id or an empty "".
+        val i = currentFlow?.steps?.indexOf(step) ?: -1
+        val before = currentFlow?.steps?.getOrNull(i - 1)?.let { describe(it, currentSlots) }
+        return if (before != null) "the unlabelled button that comes after $before" else "the unlabelled button for this step"
+    }
+
+    /** A step whose control has no caption at all: nothing to check a guess against, so its context has to do. */
+    private fun unlabelled(step: FlowStep) = step.type == StepType.TAP && step.slotRef == null &&
+        step.selector.text.isBlank() && step.selector.contentDesc.isBlank() && step.selector.near.isBlank()
+
+    /** The step as an instruction for the model. */
+    private fun intentOf(i: Int, step: FlowStep, sel: Selector): String {
+        val id = step.selector.resourceId.substringAfterLast('/')
+        return describe(step.copy(selector = sel), currentSlots) + if (unlabelled(step) && id.isNotBlank()) " (a control with no label, id \"$id\")" else ""
+    }
+
+    /** What the task is and what happens just before and after step [i]. */
+    private fun contextOf(i: Int): String {
+        val flow = currentFlow ?: return ""
+        val before = flow.steps.getOrNull(i - 1)?.let { describe(it, currentSlots) }
+        val after = flow.steps.getOrNull(i + 1)?.let { describe(it, currentSlots) }
+        return "Task: \"${flow.description}\" with ${currentSlots.entries.joinToString { "${it.key}=${it.value}" }}. " +
+            "This is step ${i + 1} of ${flow.steps.size}." + (before?.let { " Just before: $it." } ?: "") + (after?.let { " Next: $it." } ?: "")
+    }
 
     /**
      * Nothing to tap and nothing safe to guess: say what is missing and what the screen shows, as a question. A screen
@@ -969,6 +1038,8 @@ class Replayer(
         /** Below this much budget the LLM picker is not asked: its answer could not arrive before the question is due. */
         const val MIN_PICK_MS = 1500L
         const val SUBTREE_MAX = 30
+        /** Longest wait for the model to read a free-form answer. */
+        const val MODEL_ANSWER_MS = 8_000L
         val POSITION = Regex("(?:at )?(?:the )?(bottom|top|first|last)(?: (?:one|of the screen))?")
         val DISMISS = Regex("^(close|skip|not now|maybe later|no thanks|got it|ok|okay|allow|cancel|dismiss|later|[×✕x])$", RegexOption.IGNORE_CASE)
         // Benign pass-through controls an upsell/interstitial can sit behind, on top of the cart ("Add items worth ₹X…
