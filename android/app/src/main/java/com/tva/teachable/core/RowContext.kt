@@ -21,6 +21,12 @@ object RowContext {
         return parent
     }
 
+    private fun inScrollable(node: UiNode, nodes: List<UiNode>, parent: IntArray): Boolean {
+        var p = parent.getOrElse(node.index) { -1 }
+        while (p >= 0) { if (nodes[p].scrollable) return true; p = parent.getOrElse(p) { -1 } }
+        return false
+    }
+
     fun subtree(nodes: List<UiNode>, root: UiNode): List<UiNode> =
         listOf(root) + nodes.drop(root.index + 1).takeWhile { it.depth > root.depth }
 
@@ -64,7 +70,10 @@ object RowContext {
         if (n.isNotEmpty()) raw.firstOrNull { (_, texts) -> texts.any { norm(it) == n } }?.let { return it.first }
         // The item itself is on screen but its row has no such control (a dish already in the cart shows a stepper
         // instead of ADD): a neighbour that merely contains the words ("Double Cheese Margherita Pizza") is a different dish.
-        if (n.isNotEmpty() && nodes.any { !it.editable && !it.password && (norm(it.text) == n || norm(it.contentDesc) == n) }) return null
+        // Only a name IN the list counts: a search bar echoing the query ("s25 ultra" in Amazon's top bar, seen live) is
+        // not that item, and counting it blocked the right row's Add to cart. Screens with no list keep the old rule.
+        val inList = if (nodes.any { it.scrollable }) { x: UiNode -> inScrollable(x, nodes, parent) } else { _: UiNode -> true }
+        if (n.isNotEmpty() && nodes.any { !it.editable && !it.password && (norm(it.text) == n || norm(it.contentDesc) == n) && inList(it) }) return null
         // The bare slot value, then its longest word: "Margherita pizzas" (spoken plural) still finds "Margherita Pizza".
         val word = fallback.orEmpty().split(Regex("\\s+")).maxByOrNull { it.length }.orEmpty()
         for (f in listOf(fallback.orEmpty(), word.takeIf { norm(it).length >= 4 }.orEmpty()).filter { norm(it).isNotEmpty() }.distinct()) {

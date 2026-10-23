@@ -195,8 +195,9 @@ class VoiceService : Service() {
 
     private fun startTeaching(m: JSONObject) {
         val svc = TvaAccessibilityService.instance ?: return AppState.log("Accessibility Service is not enabled")
-        // Reaching a payment/OTP/login screen ends the demonstration: it is saved up to there, as if "done" was said.
-        teach = m; svc.startRecording { b -> AppState.log("teach: reached the ${b.kind.name.lowercase()} screen, finishing"); finishTeaching() }
+        // A payment/OTP/login screen is never recorded (the Recorder skips it), but only the user ends the demonstration:
+        // ending it there by itself cut a teach short at Amazon's Add to cart (a false payment match, seen live).
+        teach = m; svc.startRecording { b -> AppState.log("teach: ${b.kind.name.lowercase()} screen - not recording it; say done when finished") }
         AppState.teaching.value = true
         AppState.status.value = "Do the task on screen, then say or tap Done"
         AppState.log("teach mode: ${m.optString("command")}")

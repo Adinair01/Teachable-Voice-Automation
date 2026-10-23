@@ -17,12 +17,16 @@ const within = (run, line) => {
 /**
  * [transcript] without its leading echo of any of [recent] (the assistant's recent lines). The longest echoed prefix
  * is removed when it is at least three words long, or when it is one of the assistant's lines in full ("Done.").
+ * Words that are the user's OWN earlier command [own] are never an echo: the assistant quotes it back ("Learned: Order
+ * a s 25 ultra from Amazon"), and saying it again to run it was deleted as an echo, seen live.
  */
-export function stripEcho(transcript = '', recent = []) {
+export function stripEcho(transcript = '', recent = [], own = []) {
   const said = words(transcript);
   const lines = recent.map(words).filter((l) => l.length);
+  const mine = own.map(words).filter((l) => l.length);
   for (let n = said.length; n > 0; n--) {
     const head = said.slice(0, n);
+    if (mine.some((l) => within(head, l))) continue;
     const echoed = lines.some((l) => within(head, l) && (n >= MIN_RUN || l.length === n));
     if (echoed) return dropWords(transcript, n);
   }
