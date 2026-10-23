@@ -28,6 +28,17 @@ class RowContextTest {
     @Test fun spokenPluralFallsBackToTheLongestWord() = assertEquals(4, pick("Margherita pizzas", "Margherita pizzas"))
     @Test fun noMatchingRowMeansNoTapNotTheFirstAdd() = assertNull(pick("Farmhouse Pizza", "Farmhouse"))
 
+    @Test fun aSearchBarEchoingTheQueryIsNotTheItemAlreadyInTheCart() {
+        // Amazon, live: the top bar shows the query "s25 ultra"; the result row with Add to cart is in the list below.
+        nodes.clear()
+        n(0)
+        n(1, text = "s25 ultra", id = "a:id/chrome_search_hint_view")
+        nodes += UiNode(nodes.size, 1, "a", "", "", "", "", "", false, false, true, false) // the results list
+        n(2); n(3, desc = "Sponsored Ad - Samsung Galaxy S25 Ultra 5G AI Smartphone"); n(3, desc = "Add to cart", click = true) // 5
+        val isCart = { u: UiNode -> u.contentDesc == "Add to cart" }
+        assertEquals(5, RowContext.pick(nodes, nodes.filter(isCart), "s 25 ultra", "s 25 ultra", isCart)?.index)
+    }
+
     @Test fun stepperIsFoundInTheItemsRow() {
         nodes.clear()
         n(0)
