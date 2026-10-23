@@ -106,6 +106,8 @@ export class Session {
     this.saidAt = 0;
     /** What the assistant said recently, to recognise it if the microphone picks it up again. */
     this.spoken = [];
+    /** The user's own last few commands: quoted back by the assistant, so never mistaken for its echo. */
+    this.commands = [];
     this.refreshKeyterms();
   }
 
@@ -169,7 +171,7 @@ export class Session {
     const heard = await stt.finish();
     // The microphone may have caught the end of the assistant's own last reply: that is not the user speaking.
     const recent = this.spoken.filter((s) => this.deps.now() - s.at < ECHO_MS).map((s) => s.text);
-    const text = stripEcho(heard.text ?? '', recent);
+    const text = stripEcho(heard.text ?? '', recent, this.commands);
     if (text !== (heard.text ?? '').trim()) logger.info({ heard: heard.text, kept: text }, 'removed the assistant\'s own words from a transcript');
     heard.text = text;
     this.send({ type: 'transcript', text });
@@ -183,6 +185,7 @@ export class Session {
 
   async handleCommand(text, { heard } = {}) {
     this.heard = heard ?? { text, source: 'typed' };
+    this.commands = [...this.commands, text].slice(-5);
     // Only "done" is meaningful while teaching; anything else would otherwise vanish without a word back.
     if (this.teaching) {
       // A clean voice exit: without this, "cancel"/"never mind" fell through to "I'm still watching" and the only way
