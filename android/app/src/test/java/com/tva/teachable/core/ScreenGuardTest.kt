@@ -35,6 +35,10 @@ class ScreenGuardTest {
     @Test fun paymentAppAndGatewayAreBoundaries() {
         assertEquals(BoundaryKind.PAYMENT, ScreenGuard.screen(screen("com.phonepe.app", t("Enter amount")))?.kind)
         assertEquals(BoundaryKind.PAYMENT, ScreenGuard.screen(screen(nodes = arrayOf(t("", "com.application.zomato:id/razorpay_checkout"))))?.kind)
+        assertEquals(BoundaryKind.PAYMENT, ScreenGuard.screen(screen(nodes = arrayOf(t("", "com.x:id/razorpayCheckout"))))?.kind)
+        assertEquals(BoundaryKind.PAYMENT, ScreenGuard.screen(screen(nodes = arrayOf(t("", "com.stripe.android:id/card_number"))))?.kind)
+        // Amazon, live: a banner strip on the product and cart pages, not the Stripe gateway.
+        assertEquals(null, ScreenGuard.screen(screen(nodes = arrayOf(t("", "mobileFamilyStripe_feature_div"))))?.kind)
     }
 
     @Test fun loginScreenIsABoundary() {
