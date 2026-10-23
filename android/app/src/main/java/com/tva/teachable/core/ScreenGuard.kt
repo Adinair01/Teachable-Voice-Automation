@@ -22,7 +22,9 @@ object ScreenGuard {
     // Embedded gateway SDKs show up in resource ids even when the host app is the one in the foreground.
     // As a whole name only: Amazon's "mobileFamilyStripe_feature_div" (a banner strip on product and cart pages) is not
     // the Stripe gateway, and matching it stopped teaching and replays at Add to cart (seen live).
-    private val GATEWAY_ID = Regex("(?<![A-Za-z])(razorpay|juspay|payu|cashfree|paytm|phonepe|billdesk|ccavenue|stripe|hyperpay)", RegexOption.IGNORE_CASE)
+    // "stripe" is also an everyday layout word (Amazon: "smx-simple-upsell-stripe", seen live), so Stripe counts only
+    // as its own SDK package (com.stripe.android:id/...); the other names are not English words.
+    private val GATEWAY_ID = Regex("(?<![A-Za-z])(razorpay|juspay|payu|cashfree|paytm|phonepe|billdesk|ccavenue|hyperpay)|^com\\.stripe\\b", RegexOption.IGNORE_CASE)
 
     private val OTP = Regex("\\b(otp|one[- ]time (password|code)|verification code|enter (the )?code|upi pin|mpin|enter pin|resend (otp|code))\\b", RegexOption.IGNORE_CASE)
     private val CARD_FIELD = Regex("\\b(card ?number|cvv|cvc|expiry|valid thru|mm ?/ ?yy|name on card)\\b", RegexOption.IGNORE_CASE)

@@ -10,6 +10,7 @@ import com.tva.teachable.core.UiNode
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -58,6 +59,15 @@ class ReplayerGuardTest {
         val r = Replayer(d, picker, askedAnyway, fast).run(flow(tap("Checkout now please")), emptyMap())
         assertTrue(d.tapped.isEmpty())
         assertEquals(BoundaryKind.PAYMENT, r.handover?.kind)
+    }
+
+    @Test fun aCheckoutStepWhoseButtonIsNotOnScreenIsNotReportedAsReachingPayment() = runBlocking {
+        // Amazon, live: the run was on a product page, and "Proceed to checkout" was handed over on its label alone.
+        val d = FakeDevice(listOf("Samsung Galaxy S25 Ultra", "Add to cart", "Buy Now"))
+        val r = Replayer(d, gate = askedAnyway, cfg = fast).run(flow(tap("Proceed to checkout")), emptyMap())
+        assertTrue(d.tapped.isEmpty())
+        assertNull(r.handover)
+        assertFalse(r.success)
     }
 
     @Test fun loggedOutAppHandsOverAsNotSuccess() = runBlocking {

@@ -39,6 +39,7 @@ class ScreenGuardTest {
         assertEquals(BoundaryKind.PAYMENT, ScreenGuard.screen(screen(nodes = arrayOf(t("", "com.stripe.android:id/card_number"))))?.kind)
         // Amazon, live: a banner strip on the product and cart pages, not the Stripe gateway.
         assertEquals(null, ScreenGuard.screen(screen(nodes = arrayOf(t("", "mobileFamilyStripe_feature_div"))))?.kind)
+        assertEquals(null, ScreenGuard.screen(screen(nodes = arrayOf(t("", "smx-simple-upsell-stripe"))))?.kind)
     }
 
     @Test fun loginScreenIsABoundary() {

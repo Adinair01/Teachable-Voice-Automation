@@ -211,7 +211,21 @@ class Replayer(
         // "Proceed to pay" / "Select payment method" only open the payment page, which the run then stops on: tapped
         // unattended (T2 reaches payment) and without the confirmation a committing step needs. Nothing else is.
         val entry = step.type == StepType.TAP && ScreenGuard.isPaymentEntry(step.selector.text.ifBlank { step.selector.contentDesc })
-        if (step.type == StepType.TAP && !entry) ScreenGuard.actionText("${step.selector.text} ${step.selector.contentDesc}")?.let { return handover(i, it) }
+        // A committing step hands the phone back only when its button is REALLY on screen: handing over on the label
+        // alone said "you're at the payment step" from a product page that never reached the cart (Amazon, seen live).
+        if (step.type == StepType.TAP && !entry) ScreenGuard.actionText("${step.selector.text} ${step.selector.contentDesc}")?.let { b ->
+            val sel = resolved(step.selector, slots)
+            // Its button, or a screen that is plainly at payment (a Pay / Place order control, or the cart's totals).
+            // A product page's "Buy Now" is not: it is on every product page, long before any cart.
+            val there = poll(cfg.waitMs) { t ->
+                SelectorMatcher.target(t.nodes, sel, null, forTap = true)
+                    ?: t.nodes.firstOrNull { n -> val c = "${n.text} ${n.contentDesc}"; ScreenGuard.actionText(c) != null && !BUY_NOW.containsMatchIn(c) }
+                    ?: ScreenGuard.readyToPay(t.nodes)
+            }
+            if (there != null) return handover(i, b)
+            val caption = step.selector.text.ifBlank { step.selector.contentDesc }
+            return StepResult(i, false, error = "I didn't get to \"$caption\": the screen before it was not reached, so I stopped before checkout.")
+        }
         if (step.sensitive && !entry && !gate.confirm(step, slots)) return StepResult(i, false, error = "sensitive step not confirmed", declined = true)
         val value = resolveSlots(step.value, slots)
         val slotValue = step.slotRef?.let { slots[it] }?.trim().orEmpty()
@@ -1028,6 +1042,7 @@ class Replayer(
 
     private companion object {
         const val MAX_QTY = 20
+        val BUY_NOW = Regex("\\bbuy now\\b", RegexOption.IGNORE_CASE)
         const val MAX_LLM_PICKS = 2
         const val MAX_QUESTIONS = 4
         /** Words on a control that say what it DOES, not which one it is: never enough to trust an LLM's guess. */
