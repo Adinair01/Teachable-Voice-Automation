@@ -503,7 +503,17 @@ class Replayer(
     private fun signature(t: LiveTree) = t.nodes.take(200).joinToString("|") { "${it.resourceId}:${it.text}:${it.contentDesc}" }.hashCode()
 
     private fun probeFor(type: StepType, sel: Selector, slotValue: String?): (LiveTree) -> Pair<LiveTree, UiNode>? = { t ->
-        SelectorMatcher.target(t.nodes, sel, slotValue, type == StepType.TAP)?.let { t to it }
+        (SelectorMatcher.target(t.nodes, sel, slotValue, type == StepType.TAP) ?: recount(t.nodes, type, sel, slotValue))?.let { t to it }
+    }
+
+    /**
+     * A control taught by a bare count is a badge, and the count changes: Amazon's Cart tab read "1" while teaching and
+     * "2" on the replay, because teaching itself had added to the cart (seen live). The same kind of control with another
+     * count is that control, when exactly one is on screen.
+     */
+    private fun recount(nodes: List<UiNode>, type: StepType, sel: Selector, slotValue: String?): UiNode? {
+        if (type != StepType.TAP || slotValue != null || sel.className.isBlank() || !COUNT.matches(sel.text.trim())) return null
+        return nodes.filter { it.className == sel.className && COUNT.matches(it.text.trim()) }.singleOrNull()
     }
 
     /**
@@ -1042,6 +1052,7 @@ class Replayer(
 
     private companion object {
         const val MAX_QTY = 20
+        val COUNT = Regex("\\d{1,3}")
         val BUY_NOW = Regex("\\bbuy now\\b", RegexOption.IGNORE_CASE)
         const val MAX_LLM_PICKS = 2
         const val MAX_QUESTIONS = 4

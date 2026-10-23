@@ -70,6 +70,23 @@ class ReplayerGuardTest {
         assertFalse(r.success)
     }
 
+    @Test fun aCartTabTaughtByItsBadgeCountIsFoundWithAnotherCount() = runBlocking {
+        // Amazon, live: the Cart tab was "1" while teaching and "2" on the replay.
+        val tab = "androidx.appcompat.app.ActionBar\$Tab"
+        val d = object : Device by FakeDevice(emptyList()) {
+            val taps = mutableListOf<String>()
+            override fun tree() = LiveTree(listOf(
+                UiNode(0, 0, "a", "", "", "", "", "", false, false, false, false),
+                UiNode(1, 1, "a", "", "Home", "", tab, "", true, false, false, false),
+                UiNode(2, 1, "a", "", "2", "", tab, "", true, false, false, false),
+            ), emptyList())
+            override fun tap(tree: LiveTree, node: UiNode): Boolean { taps += node.text; return true }
+        }
+        val step = tap("1").let { it.copy(selector = it.selector.copy(className = tab)) }
+        Replayer(d, gate = askedAnyway, cfg = fast).run(flow(step), emptyMap())
+        assertEquals(listOf("2"), d.taps)
+    }
+
     @Test fun loggedOutAppHandsOverAsNotSuccess() = runBlocking {
         val d = object : Device by FakeDevice(emptyList()) {
             override fun tree() = LiveTree(listOf(
