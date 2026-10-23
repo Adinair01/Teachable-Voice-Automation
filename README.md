@@ -227,6 +227,11 @@ a per-app script. A judge can teach a brand-new flow on any of these — or anot
   teach → generalise → replay pipeline also learns non-food flows (open a Settings page, switch a Clock tab, run an
   arithmetic calculation) with slot substitution ("open Bluetooth settings" → "open the Wi-Fi settings", "calculate 5
   plus 3" → "what is 9 plus 4").
+- **Android Settings** (`com.android.settings`) — **second-app proof**, taught by demonstration only: "Set my screen
+  timeout to 1 minute" (Display & brightness → Auto screen off → 1 minute), to be replayed as "Keep my screen on for 5
+  minutes"; "Set screen timeout to 7 minutes" (an option the app does not offer) should make the assistant ask, naming
+  the options actually on screen, and continue with the one the user says. Not yet verified end to end on the phone. Labels are from a Realme phone (Android 15); One UI
+  names the same setting "Screen timeout", so a Galaxy needs its own one-time demonstration.
 
 ## Known limitations
 
